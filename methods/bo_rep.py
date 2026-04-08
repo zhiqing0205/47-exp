@@ -23,7 +23,7 @@ class Learner(nn.Module):
         super(Learner, self).__init__()
         self.args = args
         self.data=args.data
-        self.outer_batch_size = args.outer_batch_size
+        self.outer_batch_size = getattr(args, 'outer_batch_size', args.batch_size)
         self.inner_batch_size = args.inner_batch_size
         self.outer_update_lr = args.outer_update_lr
         self.old_outer_update_lr = args.outer_update_lr
@@ -32,7 +32,7 @@ class Learner(nn.Module):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.collate_pad_ = self.collate_pad if args.data=='news_data' else self.collate_pad_snli
         self.training_size = training_size
-        self.interval = args.interval
+        self.interval = getattr(args, 'interval', args.update_interval)
         if args.data == 'news_data':
             self.meta_model = RNN(
                 word_embed_dim=args.word_embed_dim,
@@ -73,10 +73,10 @@ class Learner(nn.Module):
         self.beta = args.beta
         self.nu = args.nu
         self.y_warm_start = args.y_warm_start
-        self.normalized = args.grad_normalized
+        self.normalized = getattr(args, 'grad_normalized', True)
         self.criterion = nn.CrossEntropyLoss(reduction='none').to(self.device)
 
-    def forward(self, train_loader, training=True, task_id=0):
+    def forward(self, train_loader, val_loader=None, training=True, epoch=0):
         task_accs = []
         task_loss = []
         self.inner_model.to(self.device)
@@ -245,11 +245,8 @@ class Learner(nn.Module):
 
 def predict(net, inputs):
     """ Get predictions for a single batch. """
-    # snli dataaset
-    # (s1_embed, s2_embed), (s1_lens, s2_lens) = inputs
-    # outputs = net((s1_embed.cuda(), s1_lens), (s2_embed.cuda(), s2_lens))
-    s_embed, s_lens = inputs
-    outputs = net((s_embed.cuda(), s_lens))
+    (s1_embed, s2_embed), (s1_lens, s2_lens) = inputs
+    outputs = net((s1_embed.cuda(), s1_lens), (s2_embed.cuda(), s2_lens))
     return outputs
 
 

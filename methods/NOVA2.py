@@ -14,8 +14,8 @@ class Learner(nn.Module):
         self.training_size = training_size
 
         # 1. 模型定义 (RNN 结构)
-        from RNN_net import RNN
-        self.inner_model = RNN(
+        from .RNN_net import NLIRNN
+        self.inner_model = NLIRNN(
             word_embed_dim=args.word_embed_dim,
             encoder_dim=args.encoder_dim,
             n_enc_layers=args.n_enc_layers,
@@ -68,13 +68,12 @@ class Learner(nn.Module):
         reg = 0.0001 * sum([p.norm().pow(2) for p in model.parameters()]).sqrt()
         return loss + reg, outputs
 
-    def __call__(self, train_loader, training=True, task_id=0):
+    def __call__(self, train_loader, val_loader=None, training=True, epoch=0):
         self.inner_model.train()
         task_accs, task_loss = [], []
 
         for step, data in enumerate(train_loader):
             inputs, targets, data_indx = data
-            inputs = (inputs[0].to(self.device), inputs[1])
             targets = targets.to(self.device)
 
             # --- 第一阶段：梯度收集 ---
@@ -144,17 +143,20 @@ class Learner(nn.Module):
 
     def test(self, test_loader):
         self.inner_model.eval()
+        self.inner_model.to(self.device)
         task_accs, task_loss = [], []
-        with torch.no_grad():
-            for data in test_loader:
-                inputs, targets, _ = data
-                if isinstance(inputs[0], torch.Tensor):
-                    inputs = (inputs[0].to(self.device), inputs[1])
-                outputs = self.inner_model(inputs)
-                loss = torch.mean(self.criterion(outputs, targets.to(self.device)))
-                acc = accuracy_score(targets.cpu().numpy(), torch.argmax(outputs, dim=1).cpu().numpy())
-                task_accs.append(acc);
-                task_loss.append(loss.item())
+        for data in test_loader:
+            inputs, targets, _ = data
+            outputs = predict(self.inner_model, inputs)
+            loss = torch.mean(self.criterion(outputs, targets.to(self.device)))
+            q_logits = F.softmax(outputs, dim=1)
+            pre_label_id = torch.argmax(q_logits, dim=1).detach().cpu().numpy().tolist()
+            q_label_id = targets.detach().cpu().numpy().tolist()
+            acc = accuracy_score(pre_label_id, q_label_id)
+            task_accs.append(acc)
+            task_loss.append(loss.detach().cpu())
+            torch.cuda.empty_cache()
+            print(f'Task loss: {np.mean(task_loss):.4f}, Task acc: {np.mean(task_accs):.4f}')
         return np.mean(task_accs), np.mean(task_loss)
 
     def _flatten_to_model(self, flat_params):
@@ -177,4 +179,7 @@ class Learner(nn.Module):
 
 
 def predict(net, inputs):
-    return net(inputs)
+    """ Get predictions for a single batch. """
+    (s1_embed, s2_embed), (s1_lens, s2_lens) = inputs
+    outputs = net((s1_embed.cuda(), s1_lens), (s2_embed.cuda(), s2_lens))
+    return outputs

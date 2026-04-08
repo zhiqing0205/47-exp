@@ -6,7 +6,7 @@ import os
 
 logger = logging.getLogger()
 logger.setLevel(logging.CRITICAL)
-from methods import stocbio, saba, ma_soba, ttsa, bo_rep, accbo, sustain, vrbo
+from methods import stocbio, saba, ma_soba, ttsa, bo_rep, accbo, sustain, vrbo, MEHA, NOVA2, s_pngbio
 from data_loader import SNLIDataset, Sent140Dataset, collate_pad, collate_pad_double
 from torch.utils.data import DataLoader
 import random
@@ -193,6 +193,30 @@ def main():
         args.update_interval = 2
         args.inner_update_step = 3
         learner = accbo.Learner(args, training_size)
+
+    elif args.methods == 'meha':
+        args.outer_update_lr = 1e-2
+        args.inner_update_lr = 1e-2
+        args.gamma = 0.1
+        args.lambda_val = 0.1
+        learner = MEHA.Learner(args, training_size)
+
+    elif args.methods == 'nova2':
+        args.outer_update_lr = 1e-2
+        args.inner_update_lr = 1e-2
+        args.gamma = 0.1
+        args.beta = 0.9
+        args.nu = 1e-2
+        args.mu_z = 0.8
+        args.lambda_val = 0.1
+        learner = NOVA2.Learner(args, training_size)
+
+    elif args.methods == 's-pngbio':
+        args.outer_update_lr = 1e-2
+        args.inner_update_lr = 1e-2
+        args.gamma = 0.1
+        args.lambda_val = 0.1
+        learner = s_pngbio.Learner(args, training_size)
 
     else:
         print('No such method, please change the method name!')
