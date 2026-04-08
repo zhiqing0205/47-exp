@@ -1,9 +1,99 @@
-# This is code for paper "Bilevel Optimization under Unbounded Smoothness: A New Algorithm and Convergence Analysis"
+# Bilevel Optimization under Unbounded Smoothness
 
-Bilevel optimization is an important formulation for many machine learning problems, such as meta-learning and hyperparameter optimization. Current bilevel optimization algorithms assume that the gradient of the upper-level function is Lipschitz (i.e., the upper-level function has a bounded smoothness parameter). However, recent studies reveal that certain neural networks such as recurrent neural networks (RNNs) and long-short-term memory networks (LSTMs) exhibit potential unbounded smoothness, rendering conventional bilevel optimization algorithms unsuitable for these neural networks. In this paper, we design a new bilevel optimization algorithm, namely BO-REP, to address this challenge. This algorithm updates the upper-level variable using normalized momentum and incorporates two novel techniques for updating the lower-level variable: \textit{initialization refinement} and \textit{periodic updates}. Specifically, once the upper-level variable is initialized, a subroutine is invoked to obtain a refined estimate of the corresponding optimal lower-level variable, and the lower-level variable is updated only after every specific period instead of each iteration. When the upper-level problem is nonconvex and unbounded smooth, and the lower-level problem is strongly convex, we prove that our algorithm requires $\widetilde{\mathcal{O}}(1/\epsilon^4)$ \footnote{Here $\widetilde{O}(\cdot)$ compresses logarithmic factors of $1/\epsilon$ and $1/\delta$, where $\delta\in(0,1)$ denotes the failure probability.} iterations to find an $\epsilon$-stationary point in the stochastic setting, where each iteration involves calling a stochastic gradient or Hessian-vector product oracle. Notably, this result matches the state-of-the-art complexity results under the bounded smoothness setting up to logarithmic factors. Our proof relies on novel technical lemmas for the periodically updated lower-level variable, which are of independent interest. Our experiments on hyper-representation learning, hyperparameter optimization, and data hyper-cleaning for text classification tasks demonstrate the effectiveness of our proposed algorithm
+This repository implements and benchmarks multiple bilevel optimization algorithms on **data hyper-cleaning** tasks using the SNLI dataset with RNN models.
 
-## Run BO-REP for data hyper-cleaning:
-```commandline
-    python main.py --inner_update_lr 5e-2  --outer_update_lr 5e-2
-   
+> Based on the paper: *"Bilevel Optimization under Unbounded Smoothness: A New Algorithm and Convergence Analysis"*
+
+## Problem Setting
+
+Bilevel optimization for data hyper-cleaning: the upper-level optimizes sample weights (lambda) to minimize validation loss, while the lower-level trains an RNN classifier weighted by these sample weights. Label noise is injected at a configurable rate to simulate corrupted training data.
+
+## Methods
+
+| Method | File | Description |
+|--------|------|-------------|
+| StocBio | `methods/stocbio.py` | Stochastic bilevel optimizer with Neumann series |
+| TTSA | `methods/ttsa.py` | Two-timescale stochastic approximation |
+| SABA | `methods/saba.py` | SAGA-based bilevel approximation |
+| MA-SOBA | `methods/ma_soba.py` | Momentum-assisted single-loop bilevel optimizer |
+| BO-REP | `methods/bo_rep.py` | Bilevel optimizer with initialization refinement and periodic updates |
+| SUSTAIN | `methods/sustain.py` | Variance-reduced STORM-based bilevel optimizer |
+| VRBO | `methods/vrbo.py` | Variance-reduced bilevel optimization with SPIDER |
+| AccBO | `methods/accbo.py` | Accelerated bilevel optimizer with Nesterov momentum |
+| MEHA | `methods/MEHA.py` | Penalty-based bilevel method (single-loop) |
+| NOVA2 | `methods/NOVA2.py` | Penalty-based bilevel method with momentum |
+| S-PNGBIO | `methods/s_pngbio.py` | Penalty-based normalized gradient bilevel method |
+
+## Project Structure
+
 ```
+.
+├── main.py              # Entry point, argument parsing, training loop
+├── data_loader.py       # SNLI / Sent140 dataset loading and preprocessing
+├── methods/
+│   ├── RNN_net.py       # RNN / NLIRNN model definitions
+│   ├── stocbio.py
+│   ├── ttsa.py
+│   ├── saba.py
+│   ├── ma_soba.py
+│   ├── bo_rep.py
+│   ├── sustain.py
+│   ├── vrbo.py
+│   ├── accbo.py
+│   ├── MEHA.py
+│   ├── NOVA2.py
+│   └── s_pngbio.py
+├── data/                # Pre-processed SNLI pickle files
+├── logs/                # Training logs and results
+├── requirements.txt
+└── README.md
+```
+
+## Setup
+
+```bash
+conda create -n bilevel python=3.9 -y
+conda activate bilevel
+pip install -r requirements.txt
+```
+
+## Usage
+
+Run a specific method:
+
+```bash
+python main.py --methods <method_name> --epoch 20 --seed 2
+```
+
+Available method names: `stocbio`, `ttsa`, `saba`, `ma-soba`, `bo-rep`, `sustain`, `vrbo`, `accbo`, `meha`, `nova2`, `s-pngbio`
+
+### Key Arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--methods` | `stocbio` | Method to run |
+| `--epoch` | `20` | Number of outer epochs |
+| `--seed` | `2` | Random seed |
+| `--noise_rate` | `0.1` | Label noise rate |
+| `--inner_batch_size` | `16` | Training batch size |
+| `--data` | `snli` | Dataset (snli) |
+
+### Run All Methods
+
+```bash
+# Serial execution (recommended)
+for method in stocbio ttsa saba ma-soba bo-rep sustain vrbo accbo meha nova2 s-pngbio; do
+    python main.py --methods $method --epoch 20 --seed 2
+done
+```
+
+## Data
+
+The SNLI dataset is pre-processed and stored as pickle files in `data/`. The pre-processing includes GloVe word embeddings (300d) and label noise injection.
+
+## Output
+
+Training logs are saved to `logs/` with format:
+`{method}_outlr{lr}_inlr{lr}_seed{seed}_{date}.txt`
+
+Each log contains: experiment config, train/test accuracy, train/test loss, and total time.
