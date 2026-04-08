@@ -115,9 +115,9 @@ def main():
         if os.path.isfile(f'data/{args.data}_train_{args.noise_rate}.pkl') and os.path.isfile(
                 f'data/{args.data}_train_{args.noise_rate}.pkl'):
             print('Loading data...')
-            train = torch.load(f'data/{args.data}_train_{args.noise_rate}.pkl')
-            val = torch.load(f'data/{args.data}_dev_{args.noise_rate}.pkl')
-            test = torch.load(f'data/{args.data}_test_{args.noise_rate}.pkl')
+            train = torch.load(f'data/{args.data}_train_{args.noise_rate}.pkl', weights_only=False)
+            val = torch.load(f'data/{args.data}_dev_{args.noise_rate}.pkl', weights_only=False)
+            test = torch.load(f'data/{args.data}_test_{args.noise_rate}.pkl', weights_only=False)
         else:
             print('Preprocessing data...')
             train = SNLIDataset("../data", "train", noise_rate=args.noise_rate)
