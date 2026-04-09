@@ -2,11 +2,10 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Data files
-data/*.pkl
-
-# Logs
-logs/
+# Logs (output files, not structure)
+logs/*.log
+logs/*.txt
+logs/logs/
 
 # Python
 *.egg-info/
@@ -34,3 +33,5 @@ env/
 *.bak
 *.tmp
 nohup.out
+.claude/
+.ipynb_checkpoints/
