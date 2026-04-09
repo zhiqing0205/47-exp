@@ -1,0 +1,36 @@
+__pycache__/
+*.pyc
+*.pyo
+
+# Data files
+data/*.pkl
+
+# Logs
+logs/
+
+# Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Conda/venv
+.conda/
+venv/
+env/
+
+# Misc
+*.bak
+*.tmp
+nohup.out
