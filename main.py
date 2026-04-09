@@ -6,7 +6,7 @@ import os
 
 logger = logging.getLogger()
 logger.setLevel(logging.CRITICAL)
-from methods import stocbio, saba, ma_soba, ttsa, bo_rep, accbo, sustain, vrbo, MEHA, NOVA2, s_pngbio
+from methods import stocbio, saba, ma_soba, ttsa, bo_rep, accbo, sustain, vrbo, MEHA, NOVA2, NOVA3, s_pngbio
 from data_loader import SNLIDataset, Sent140Dataset, collate_pad, collate_pad_double
 from torch.utils.data import DataLoader
 import random
@@ -200,6 +200,14 @@ def main():
         args.gamma = 0.1
         args.lambda_val = 0.1
         learner = MEHA.Learner(args, training_size)
+
+    elif args.methods == 'nova3':
+        args.outer_update_lr = 1e-2
+        args.inner_update_lr = 1e-2
+        args.gamma = 0.1
+        args.beta = 0.9
+        args.nu = 1e-2
+        learner = NOVA3.Learner(args, training_size)
 
     elif args.methods == 'nova2':
         args.outer_update_lr = 1e-2
