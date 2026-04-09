@@ -47,7 +47,7 @@ def main():
     parser.add_argument("--epoch", default=20, type=int,
                         help="Number of outer iteration")
 
-    parser.add_argument("--inner_batch_size", default=16, type=int,
+    parser.add_argument("--inner_batch_size", default=512, type=int,
                         help="Training batch size in inner iteration")
 
     parser.add_argument("--neumann_lr", default=1e-2, type=float,
