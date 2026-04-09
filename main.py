@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 import random
 import numpy as np
 
-torch.backends.cudnn.enabled = True
+torch.backends.cudnn.enabled = False
 
 
 def random_seed(value):
@@ -228,9 +228,9 @@ def main():
     acc_loss_train = []
     for epoch in range(args.epoch):
         print(f"[epoch/epochs]:{epoch}/{args.epoch}")
-        train_loader = DataLoader(train, shuffle=True, batch_size=args.inner_batch_size, collate_fn=collate_pad_double)
-        val_loader = DataLoader(val, shuffle=True, batch_size=args.batch_size, collate_fn=collate_pad_double)
-        test_loader = DataLoader(test, batch_size=args.batch_size, collate_fn=collate_pad_double)
+        train_loader = DataLoader(train, shuffle=True, batch_size=args.inner_batch_size, collate_fn=collate_pad_double, num_workers=4, pin_memory=True)
+        val_loader = DataLoader(val, shuffle=True, batch_size=args.batch_size, collate_fn=collate_pad_double, num_workers=2, pin_memory=True)
+        test_loader = DataLoader(test, batch_size=args.batch_size, collate_fn=collate_pad_double, num_workers=2, pin_memory=True)
         acc, loss = learner(train_loader, val_loader, training=True, epoch=epoch)
         acc_all_train.append(acc)
         acc_loss_train.append(loss)
