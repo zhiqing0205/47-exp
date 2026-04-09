@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 import random
 import numpy as np
 
-torch.backends.cudnn.enabled = False
+torch.backends.cudnn.enabled = True
 
 
 def random_seed(value):
