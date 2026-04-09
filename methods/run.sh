@@ -1,10 +1,24 @@
-##!/bin/bash
-m=0
-time=$(date "+%Y%m%d-%H%M%S")
-for k in {0..4}; do
-    LOG_DIR=logs/logs/$log.out
-    CUDA_VISIBLE_DEVICES=$(($m%4)) python main.py  --save_direct logs --seed $k --noise_rate 0.1 >$LOG_DIR &
-    m=$(($m+1))
-done
-wait
+#!/bin/bash
+# Run selected methods serially
+# Usage: bash methods/run.sh
 
+cd "$(dirname "$0")/.."
+
+eval "$(conda shell.bash hook)"
+conda activate bilevel
+
+EPOCH=20
+SEED=2
+methods=("nova2" "nova3" "meha" "s-pngbio" "accbo" "bo-rep")
+
+mkdir -p logs
+
+for m in "${methods[@]}"; do
+    echo ">>> 正在运行方法: $m (epoch=$EPOCH, seed=$SEED) $(date)"
+    PYTHONUNBUFFERED=1 python main.py --methods "$m" --epoch $EPOCH --seed $SEED 2>&1 | tee "logs/${m}_e${EPOCH}.log"
+    echo "<<< $m 完成 exit=$? $(date)"
+    echo ""
+done
+
+echo "=== 全部完成 $(date) ==="
+python stats.py --output results.md
