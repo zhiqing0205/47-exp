@@ -1,9 +1,17 @@
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.optim import SGD
+from torch import nn
+from torch.nn import functional as F
 import numpy as np
 from sklearn.metrics import accuracy_score
+from .RNN_net import NLIRNN
+import copy
+
+
+def predict(net, inputs):
+    """ Get predictions for a single batch. """
+    (s1_embed, s2_embed), (s1_lens, s2_lens) = inputs
+    outputs = net((s1_embed.cuda(), s1_lens), (s2_embed.cuda(), s2_lens))
+    return outputs
 
 
 class Learner(nn.Module):
@@ -13,133 +21,136 @@ class Learner(nn.Module):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.training_size = training_size
 
-        # 1. 模型定义 (RNN 结构)
-        from .RNN_net import NLIRNN
+        # 1. 初始化内部模型 y
         self.inner_model = NLIRNN(
             word_embed_dim=args.word_embed_dim,
             encoder_dim=args.encoder_dim,
             n_enc_layers=args.n_enc_layers,
-            dpout_model=0.0,
-            dpout_fc=0.0,
-            fc_dim=args.fc_dim,
-            n_classes=args.n_classes,
-            pool_type=args.pool_type,
-            linear_fc=args.linear_fc
+            dpout_model=0.0, dpout_fc=0.0,
+            fc_dim=args.fc_dim, n_classes=args.n_classes,
+            pool_type=args.pool_type, linear_fc=args.linear_fc
         ).to(self.device)
 
-        # 2. 上层变量 x (样本权重)
-        self.lambda_x = torch.ones((self.training_size)).to(self.device)
-        self.lambda_x.requires_grad = True
+        # 2. 初始化超参数 x (lambda_x)
+        self.lambda_x = torch.ones(self.training_size, requires_grad=True, device=self.device)
 
-        # 3. 辅助变量 z (展平处理)
+        # 3. 初始化辅助变量 z 及其动量 d_z
         param_count = sum(p.numel() for p in self.inner_model.parameters())
-        self.z_params = torch.randn(param_count, 1).to(self.device)
-        nn.init.xavier_uniform_(self.z_params)
+        self.z = torch.randn(param_count, 1, device=self.device)
+        nn.init.xavier_uniform_(self.z)
+        self.d_z = torch.zeros_like(self.z)  # z 的动量项
 
-        # 4. 动量缓冲区初始化
-        self.d_z = torch.zeros_like(self.z_params).to(self.device)
-        self.d_x = torch.zeros(self.training_size).to(self.device)
+        # 4. 初始化 x 和 y 的动量缓存
+        self.d_x = torch.zeros_like(self.lambda_x)
         self.d_y = [torch.zeros_like(p) for p in self.inner_model.parameters()]
 
-        # 5. 超参数 (含罚函数系数 gamma 和差分系数 lambda_val)
-        self.gamma = getattr(args, 'gamma', 0.1)
-        self.rho = args.beta  # x 动量系数
-        self.nu = args.nu  # y 动量系数
-        self.mu_z = getattr(args, 'mu_z', 0.8)  # z 动量系数
-        self.lambda_val = getattr(args, 'lambda_val', 0.1)  # 差分梯度缩放系数
-
+        # 算法超参数配置
+        self.gamma = args.gamma  # 近端参数
+        self.rho = args.beta  # x 和 z 的动量系数
+        self.nu_y = args.beta  # y 的动量系数
+        self.c_t = 1.0  # 惩罚项系数 (通常设为1)
         self.criterion = nn.CrossEntropyLoss(reduction='none').to(self.device)
 
-    def get_loss(self, model, inputs, targets, data_indx=None):
-        """计算基础分类损失 + 权重处理"""
-        outputs = predict(model, inputs)
-        if data_indx is not None:
-            raw_loss = self.criterion(outputs, targets)
-            weights=torch.sigmoid(self.lambda_x[data_indx])
-            if weights.dim()!=raw_loss.dim():
-                weights=weights.unsqueeze(1)
-            loss = torch.mean(weights * raw_loss)
-        else:
-            loss = torch.mean(self.criterion(outputs, targets))
-            # 样本权重 sigmoid 映射
+    def _get_z_slice(self, index):
+        """ 辅助函数：获取扁平化 z 中对应第 i 个模型参数的切片 """
+        offset = 0
+        for i, p in enumerate(self.inner_model.parameters()):
+            numel = p.numel()
+            if i == index:
+                return self.z[offset: offset + numel].view(p.shape)
+            offset += numel
+        return None
 
-
-        # L2 正则项
-        reg = 0.0001 * sum([p.norm().pow(2) for p in model.parameters()]).sqrt()
-        return loss + reg, outputs
-
-    def __call__(self, train_loader, val_loader=None, training=True, epoch=0):
-        self.inner_model.train()
+    def forward(self, train_loader, val_loader=None, training=True, epoch=0):
         task_accs, task_loss = [], []
 
-        for step, data in enumerate(train_loader):
-            inputs, targets, data_indx = data
-            targets = targets.to(self.device)
+        # 步长设置
+        eta_t = self.args.nu  # z 的学习率
+        alpha_t = self.args.outer_update_lr  # x 的学习率
+        beta_t = self.args.inner_update_lr  # y 的学习率
 
-            # --- 第一阶段：梯度收集 ---
-            # 1. 计算在 y 处的梯度 (f_y, f_x, g_y_y, g_y_x)
-            loss_f, q_outputs = self.get_loss(self.inner_model, inputs, targets)
-            grad_f_x_tuple = torch.autograd.grad(loss_f, self.lambda_x, retain_graph=True,allow_unused=True)
-            grad_f_x=grad_f_x_tuple[0] if grad_f_x_tuple[0] is not None else torch.zeros_like(self.lambda_x)
-            grad_f_y = torch.autograd.grad(loss_f, self.inner_model.parameters(), retain_graph=True)
+        # 获取数据迭代器以支持采样三个独立的 Batch (S_f, S_g, S_gh)
+        train_iter = iter(train_loader)
+        val_iter = iter(val_loader) if val_loader is not None else iter(train_loader)
 
-            loss_g_y, _ = self.get_loss(self.inner_model, inputs, targets, data_indx)
+        # 显存优化：限制每轮迭代的步数，防止计算图堆积
+        max_steps = len(train_loader) // 2
+        for step in range(max_steps):
+            try:
+                data_f = next(train_iter)  # 用于计算外层损失 f
+                data_g = next(val_iter)  # 用于计算内层损失 g (S_g)
+                data_gh = next(train_iter)  # 用于更新 z 的采样 (S_g_hat)
+            except StopIteration:
+                break
 
-            grad_g_y_x = torch.autograd.grad(loss_g_y, self.lambda_x, retain_graph=True)[0]
-            grad_g_y_y = torch.autograd.grad(loss_g_y, self.inner_model.parameters(), retain_graph=True)
+            # --- Step A: 更新辅助变量 z (带动量) ---
+            self.inner_model.zero_grad()
+            inputs_gh, labels_gh, idx_gh = data_gh
+            labels_gh = labels_gh.to(self.device)
+            out_gh = predict(self.inner_model, inputs_gh)
+            # 计算 ∇2 g(x, z) 的近似
+            loss_gh = torch.mean(
+                torch.sigmoid(self.lambda_x[idx_gh]) * self.criterion(out_gh, labels_gh))
+            grads_gh = torch.autograd.grad(loss_gh, self.inner_model.parameters(), retain_graph=False)
+            grad_g_z_flat = torch.cat([g.detach().view(-1) for g in grads_gh]).unsqueeze(1)
 
-            # 2. 计算在 z 处的梯度 (g_z_z, g_z_x)
-            original_y = [p.data.clone() for p in self.inner_model.parameters()]
-            self._flatten_to_model(self.z_params)  # 切换模型到辅助变量 z
+            # 获取当前 y 的扁平化
+            y_flat = torch.cat([p.detach().view(-1) for p in self.inner_model.parameters()]).unsqueeze(1)
 
-            loss_g_z, _ = self.get_loss(self.inner_model, inputs, targets, data_indx)
-            grad_g_z_x = torch.autograd.grad(loss_g_z, self.lambda_x, retain_graph=True)[0]
-            grad_g_z_z = torch.autograd.grad(loss_g_z, self.inner_model.parameters())
-            grad_g_z_z_flat = torch.cat([g.view(-1) for g in grad_g_z_z]).unsqueeze(1)
+            # z 的当前梯度: ∇2 g + (1/gamma)*(z - y)
+            curr_grad_z = grad_g_z_flat + (1.0 / self.gamma) * (self.z - y_flat)
+            # 动量更新 z
+            self.d_z = self.rho * self.d_z + (1 - self.rho) * curr_grad_z
+            self.z = self.z - eta_t * self.d_z
 
-            self._restore_model(original_y)  # 还原模型到 y
+            # 及时显存回收
+            del out_gh, loss_gh, grads_gh, grad_g_z_flat, y_flat
 
-            # --- 第二阶段：动量更新与罚函数应用 ---
-            with torch.no_grad():
-                y_flat = torch.cat([p.data.view(-1) for p in self.inner_model.parameters()]).unsqueeze(1)
+            # --- Step B: 更新超参数 x (归一化更新) ---
+            inputs_f, labels_f, _ = data_f
+            labels_f = labels_f.to(self.device)
+            out_f = predict(self.inner_model, inputs_f)
+            loss_f = torch.mean(self.criterion(out_f, labels_f))
 
-                # [Update z]: 罚函数导数 (1/gamma)*(z-y)
-                # v_z = grad_g(z) + grad_penalty(z)
-                v_z = grad_g_z_z_flat + (1.0 / self.gamma) * (self.z_params - y_flat)
-                self.d_z = (self.mu_z * self.d_z + (1 - self.mu_z) * v_z).detach()
-                self.z_params -= self.args.inner_update_lr * self.d_z
+            # 获取 x 的梯度 (∇1 f)
+            grad_f_x = torch.autograd.grad(loss_f, self.lambda_x, retain_graph= True,allow_unused=True)
+            if grad_f_x[0] is not None:
+                grad_f_x = grad_f_x[0]
+            else:
+                grad_f_x=torch.zeros_like(self.lambda_x)
+            d_tilde_x = (1.0 / self.c_t) * grad_f_x
+            # x 的动量更新
+            self.d_x = self.rho * self.d_x + (1 - self.rho) * d_tilde_x
+            # 执行归一化更新
+            self.lambda_x.data -= alpha_t * (self.d_x / (torch.norm(self.d_x) + 1e-8))
 
-                # [Update x]: 包含系数 lambda_val 的差分项
-                # v_x = grad_f(x,y) + lambda * (grad_g(x,y) - grad_g(x,z))
-                diff_x = grad_g_y_x - grad_g_z_x
-                v_x = grad_f_x + self.lambda_val * diff_x
+            # --- Step C: 更新模型参数 y (归一化更新) ---
+            # 获取 y 的梯度 (∇2 f)
+            grads_f_y = torch.autograd.grad(loss_f, self.inner_model.parameters())
 
-                self.d_x = (self.rho * self.d_x + (1 - self.rho) * v_x).detach()
-                d_x_hat=self.d_x / (torch.norm(self.d_x) + 1e-8)  # 归一化处理
-                self.lambda_x.data -= self.args.outer_update_lr * d_x_hat
-                self.lambda_x.data=torch.clamp(self.lambda_x.data, min=0.0)  # 限制在 [0, 1] 范围内
+            for i, p in enumerate(self.inner_model.parameters()):
+                z_slice = self._get_z_slice(i)
+                # d_tilde_y = (1/c)*∇2 f + (1/gamma)*(z - y)
+                d_tilde_y_i = (1.0 / self.c_t) * grads_f_y[i].detach() + \
+                              (1.0 / self.gamma) * (z_slice.detach() - p.detach())
 
-                # [Update y]: 罚函数关于 y 的导数为 (1/gamma)*(y-z)
-                # v_y = grad_f(y) + grad_g(y) + grad_penalty(y)
-                for i, p in enumerate(self.inner_model.parameters()):
-                    z_p = self._get_z_part(i)
-                    v_y = grad_f_y[i] + grad_g_y_y[i] + (1.0 / self.gamma) * (p.data - z_p)
+                # y 的动量更新
+                self.d_y[i] = self.nu_y * self.d_y[i] + (1 - self.nu_y) * d_tilde_y_i
+                # y 的归一化步长更新
+                p.data -= beta_t * (self.d_y[i] / (torch.norm(self.d_y[i]) + 1e-8))
 
-                    self.d_y[i] = (self.nu * v_y + (1 - self.nu) * self.d_y[i]).detach()
-                    d_y_hat = self.d_y[i] / (torch.norm(self.d_y[i]) + 1e-8)
-                    p.data -= self.args.inner_update_lr * d_y_hat
-
-            # --- 统计与显存管理 ---
-            pre_label = torch.argmax(q_outputs, dim=1).cpu().numpy()
-            acc = accuracy_score(targets.cpu().numpy(), pre_label)
-            task_accs.append(acc);
+            # 统计与记录
+            task_accs.append(self.get_accuracy(out_f, labels_f))
             task_loss.append(loss_f.item())
-
+            torch.cuda.empty_cache()
             if step % 10 == 0:
                 print(f'Step {step} | Task Loss: {np.mean(task_loss):.4f} | Acc: {np.mean(task_accs):.4f}')
-            torch.cuda.empty_cache()
 
         return np.mean(task_accs), np.mean(task_loss)
+
+    def get_accuracy(self, outputs, labels):
+        pre_label = torch.argmax(F.softmax(outputs, dim=1), dim=1)
+        return accuracy_score(pre_label.cpu().numpy(), labels.cpu().numpy())
 
     def test(self, test_loader):
         self.inner_model.eval()
@@ -157,29 +168,5 @@ class Learner(nn.Module):
             task_loss.append(loss.detach().cpu())
             torch.cuda.empty_cache()
             print(f'Task loss: {np.mean(task_loss):.4f}, Task acc: {np.mean(task_accs):.4f}')
+        self.inner_model.train()
         return np.mean(task_accs), np.mean(task_loss)
-
-    def _flatten_to_model(self, flat_params):
-        pointer = 0
-        for p in self.inner_model.parameters():
-            numel = p.numel()
-            p.data.copy_(flat_params[pointer:pointer + numel].view_as(p))
-            pointer += numel
-
-    def _restore_model(self, param_list):
-        for p, orig_p in zip(self.inner_model.parameters(), param_list):
-            p.data.copy_(orig_p)
-
-    def _get_z_part(self, index):
-        pointer = 0
-        for i, p in enumerate(self.inner_model.parameters()):
-            numel = p.numel()
-            if i == index: return self.z_params[pointer:pointer + numel].view_as(p)
-            pointer += numel
-
-
-def predict(net, inputs):
-    """ Get predictions for a single batch. """
-    (s1_embed, s2_embed), (s1_lens, s2_lens) = inputs
-    outputs = net((s1_embed.cuda(), s1_lens), (s2_embed.cuda(), s2_lens))
-    return outputs
