@@ -235,23 +235,14 @@ def main():
     save_path = 'logs/'
 
     total_time = (time.time() - st) / 3600
-    result = {
-        'Exp configuration': str(args),
-        'AVG Train ACC': str(acc_all_train),
-        'AVG Test ACC': str(acc_all_test),
-        'AVG Train LOSS': str(acc_loss_train),
-        'AVG Test LOSS': str(acc_loss_test),
-        'epoch_times_sec': str(epoch_times),
-        'total_time_hours': total_time
-    }
-    with open(os.path.join(save_path, file_name) + '.txt', 'w') as f:
-        f.write(str(result))
-    torch.save((acc_all_train, acc_all_test, acc_loss_train, acc_loss_test, epoch_times),
-               os.path.join(save_path, file_name))
-    print(f'\n=== Final Summary ===')
-    print(f'Total time: {total_time:.2f} h')
-    print(f'Best Test Acc: {max(acc_all_test):.4f} (epoch {acc_all_test.index(max(acc_all_test))})')
-    print(f'Epoch times: {[f"{t:.1f}s" for t in epoch_times]}')
+    files = open(os.path.join(save_path, file_name) + '.txt', 'w')
+    files.write(str({'Exp configuration': str(args), 'AVG Train ACC': str(acc_all_train),
+                     'AVG Test ACC': str(acc_all_test), 'AVG Train LOSS': str(acc_loss_train),
+                     'AVG Test LOSS': str(acc_loss_test), 'time': total_time,
+                     'epoch_times_sec': str(epoch_times)}))
+    files.close()
+    torch.save((acc_all_train, acc_all_test, acc_loss_train, acc_loss_test), os.path.join(save_path, file_name))
+    print(f'time:{total_time} h')
     print(args)
 
 
