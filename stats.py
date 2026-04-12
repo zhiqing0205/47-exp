@@ -38,65 +38,37 @@ def parse_log(filepath):
     return train_last, test_results, max_epoch
 
 
-def parse_master_log(filepath):
-    """Parse master log for timing info."""
-    times = {}
-    if not os.path.exists(filepath):
-        return times
-    with open(filepath) as f:
-        for line in f:
-            m = re.match(r'>>> (\S+) start .* (\d{2}:\d{2}:\d{2})', line)
-            if m:
-                times.setdefault(m.group(1), {})['start'] = m.group(2)
-            m = re.match(r'<<< (\S+) exit=(\d+) .* (\d{2}:\d{2}:\d{2})', line)
-            if m:
-                times.setdefault(m.group(1), {})['end'] = m.group(3)
-                times[m.group(1)]['exit'] = int(m.group(2))
-    return times
-
-
-def calc_duration(start_str, end_str):
-    """Calculate duration between HH:MM:SS strings."""
-    fmt = "%H:%M:%S"
-    try:
-        s = datetime.strptime(start_str, fmt)
-        e = datetime.strptime(end_str, fmt)
-        diff = (e - s).total_seconds()
-        if diff < 0:
-            diff += 86400
-        h = int(diff // 3600)
-        m = int((diff % 3600) // 60)
-        return f"{h}h{m:02d}m"
-    except:
+def get_duration_from_txt(method):
+    """Read training time from result txt files in logs/."""
+    import glob, ast
+    pattern = os.path.join(LOG_DIR, f"{method}_*.txt")
+    # Also try with underscores for methods like ma-soba -> ma_soba
+    files = glob.glob(pattern)
+    if not files:
+        alt = method.replace("-", "_")
+        files = glob.glob(os.path.join(LOG_DIR, f"{alt}_*.txt"))
+    if not files:
+        # Try uppercase for NOVA2 etc
+        files = glob.glob(os.path.join(LOG_DIR, f"{method.upper()}_*.txt"))
+    if not files:
         return "—"
+    # Use the most recent file
+    files.sort(key=os.path.getmtime, reverse=True)
+    try:
+        with open(files[0]) as f:
+            data = ast.literal_eval(f.read())
+        hours = data.get('time', data.get('total_time_hours', None))
+        if hours is not None:
+            hours = float(hours)
+            h = int(hours)
+            m = int((hours - h) * 60)
+            return f"{h}h{m:02d}m"
+    except:
+        pass
+    return "—"
 
 
 def generate_report(output_path):
-    master_log = os.path.join(LOG_DIR, "e20_master.log")
-    # Try alternative master log locations
-    for candidate in ["e20_master.log", "serial_e2.log"]:
-        p = os.path.join(LOG_DIR, candidate)
-        if os.path.exists(p):
-            master_log = p
-            break
-
-    # Also check the background task output
-    task_output = None
-    import glob
-    for f in glob.glob("/tmp/claude-0/-root-data-47-data-cleaning/*/tasks/*.output"):
-        if os.path.exists(f):
-            with open(f) as fh:
-                content = fh.read()
-            if ">>>" in content and "<<<" in content:
-                task_output = f
-                break
-
-    times = {}
-    if task_output:
-        times = parse_master_log(task_output)
-    if not times:
-        times = parse_master_log(master_log)
-
     lines = []
     lines.append("# Training Results Report")
     lines.append("")
@@ -121,18 +93,13 @@ def generate_report(output_path):
 
         all_results[method] = (train_last, test_results, max_epoch)
 
-        # Status
-        t = times.get(method, {})
+        # Status and duration
         last_ep = max(train_last.keys())
-        if 'end' in t and t.get('exit', 1) == 0:
+        duration = get_duration_from_txt(method)
+        if last_ep >= max_epoch - 1:
             status = "✅"
-            duration = calc_duration(t['start'], t['end'])
-        elif last_ep >= max_epoch - 1:
-            status = "✅"
-            duration = "—"
         else:
             status = f"⏳ ep {last_ep}/{max_epoch}"
-            duration = "—"
 
         # Best test
         if test_results:
