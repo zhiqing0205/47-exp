@@ -241,7 +241,7 @@ def main():
                      'AVG Test LOSS': str(acc_loss_test), 'time': total_time,
                      'epoch_times_sec': str(epoch_times)}))
     files.close()
-    torch.save((acc_all_train, acc_all_test, acc_loss_train, acc_loss_test), os.path.join(save_path, file_name))
+    torch.save((acc_all_train, acc_all_test, acc_loss_train, acc_loss_test), os.path.join(save_path, file_name) + '.pt')
     print(f'time:{total_time} h')
     print(args)
 

@@ -5,7 +5,9 @@ __pycache__/
 # Logs (output files, not structure)
 logs/*.log
 logs/*.txt
+logs/*.pt
 logs/logs/
+logs/*.db
 
 # Python
 *.egg-info/
