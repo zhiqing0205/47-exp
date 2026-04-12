@@ -22,6 +22,9 @@ build/
 *.swo
 *~
 
+# Subprojects
+Leaf/
+
 # OS
 .DS_Store
 Thumbs.db
@@ -30,6 +33,10 @@ Thumbs.db
 .conda/
 venv/
 env/
+
+# Auto-generated
+results.md
+results_time.md
 
 # Misc
 *.bak
