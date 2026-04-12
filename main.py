@@ -229,46 +229,56 @@ def main():
     else:
         print('No such method, please change the method name!')
 
-    global_step = 0
     acc_all_test = []
     acc_loss_test = []
     acc_all_train = []
     acc_loss_train = []
+    epoch_times = []
+
     for epoch in range(args.epoch):
+        epoch_start = time.time()
         print(f"[epoch/epochs]:{epoch}/{args.epoch}")
+
         train_loader = DataLoader(train, shuffle=True, batch_size=args.inner_batch_size, collate_fn=collate_pad_double)
         val_loader = DataLoader(val, shuffle=True, batch_size=args.batch_size, collate_fn=collate_pad_double)
         test_loader = DataLoader(test, batch_size=args.batch_size, collate_fn=collate_pad_double)
+
         acc, loss = learner(train_loader, val_loader, training=True, epoch=epoch)
+        train_time = time.time() - epoch_start
         acc_all_train.append(acc)
         acc_loss_train.append(loss)
-        print('training Loss:', acc_loss_train)
-        print('training Acc:', acc_all_train)
-
-        print("---------- Testing Mode -------------")
 
         acc, loss = learner.test(test_loader)
+        test_time = time.time() - epoch_start - train_time
         acc_all_test.append(acc)
         acc_loss_test.append(loss)
 
-        print(f'{args.methods} Test loss: {acc_loss_test}')
-        print(f'{args.methods} Test Acc: {acc_all_test}')
-        global_step += 1
+        epoch_total = time.time() - epoch_start
+        epoch_times.append(epoch_total)
+
+        print(f'  Train Loss: {acc_loss_train[-1]:.4f} | Train Acc: {acc_all_train[-1]:.4f}')
+        print(f'  Test  Loss: {acc_loss_test[-1]:.4f} | Test  Acc: {acc_all_test[-1]:.4f}')
+        print(f'  Time: train={train_time:.1f}s test={test_time:.1f}s total={epoch_total:.1f}s cumul={sum(epoch_times):.1f}s ({sum(epoch_times)/3600:.2f}h)')
 
     date = time.strftime('%Y-%m-%d-%H-%M', time.localtime(time.time()))
     file_name = f'{args.methods}_outlr{args.outer_update_lr}_inlr{args.inner_update_lr}_seed{args.seed}_{date}'
-    if not os.path.exists('logs/'):
-        os.mkdir('logs/')
+    os.makedirs('logs/', exist_ok=True)
     save_path = 'logs/'
 
     total_time = (time.time() - st) / 3600
-    files = open(os.path.join(save_path, file_name) + '.txt', 'w')
-    files.write(str({'Exp configuration': str(args), 'AVG Train ACC': str(acc_all_train),
-                     'AVG Test ACC': str(acc_all_test), 'AVG Train LOSS': str(acc_loss_train),
-                     'AVG Test LOSS': str(acc_loss_test), 'time': total_time}))
-    files.close()
+    result = {
+        'Exp configuration': str(args),
+        'AVG Train ACC': str(acc_all_train),
+        'AVG Test ACC': str(acc_all_test),
+        'AVG Train LOSS': str(acc_loss_train),
+        'AVG Test LOSS': str(acc_loss_test),
+        'epoch_times_sec': str(epoch_times),
+        'time': total_time,
+    }
+    with open(os.path.join(save_path, file_name) + '.txt', 'w') as f:
+        f.write(str(result))
     torch.save((acc_all_train, acc_all_test, acc_loss_train, acc_loss_test), os.path.join(save_path, file_name) + '.pt')
-    print(f'time:{total_time} h')
+    print(f'\nTotal time: {total_time:.2f}h | Best Test Acc: {max(acc_all_test):.4f} (epoch {acc_all_test.index(max(acc_all_test))})')
     print(args)
 
 

@@ -1,52 +1,47 @@
 # Bilevel Optimization under Unbounded Smoothness
 
-This repository implements and benchmarks multiple bilevel optimization algorithms on **data hyper-cleaning** tasks using the SNLI dataset with RNN models.
+Benchmarking bilevel optimization algorithms on **data hyper-cleaning** (SNLI dataset + RNN).
 
-> Based on the paper: *"Bilevel Optimization under Unbounded Smoothness: A New Algorithm and Convergence Analysis"*
+> Based on: *"Bilevel Optimization under Unbounded Smoothness: A New Algorithm and Convergence Analysis"*
 
-## Problem Setting
+## Problem
 
-Bilevel optimization for data hyper-cleaning: the upper-level optimizes sample weights (lambda) to minimize validation loss, while the lower-level trains an RNN classifier weighted by these sample weights. Label noise is injected at a configurable rate to simulate corrupted training data.
+Upper-level optimizes sample weights to minimize validation loss; lower-level trains an RNN classifier weighted by these sample weights. Label noise is injected to simulate corrupted training data.
 
 ## Methods
 
-| Method | File | Description |
-|--------|------|-------------|
-| StocBio | `methods/stocbio.py` | Stochastic bilevel optimizer with Neumann series |
-| TTSA | `methods/ttsa.py` | Two-timescale stochastic approximation |
-| SABA | `methods/saba.py` | SAGA-based bilevel approximation |
-| MA-SOBA | `methods/ma_soba.py` | Momentum-assisted single-loop bilevel optimizer |
-| BO-REP | `methods/bo_rep.py` | Bilevel optimizer with initialization refinement and periodic updates |
-| SUSTAIN | `methods/sustain.py` | Variance-reduced STORM-based bilevel optimizer |
-| VRBO | `methods/vrbo.py` | Variance-reduced bilevel optimization with SPIDER |
-| AccBO | `methods/accbo.py` | Accelerated bilevel optimizer with Nesterov momentum |
-| MEHA | `methods/MEHA.py` | Penalty-based bilevel method (single-loop) |
-| NOVA2 | `methods/NOVA2.py` | Penalty-based bilevel method with momentum |
-| S-PNGBIO | `methods/s_pngbio.py` | Penalty-based normalized gradient bilevel method |
+| Method | File | Type |
+|--------|------|------|
+| StocBio | `methods/stocbio.py` | Neumann series |
+| TTSA | `methods/ttsa.py` | Two-timescale |
+| SABA | `methods/saba.py` | SAGA-based |
+| MA-SOBA | `methods/ma_soba.py` | Momentum-assisted |
+| BO-REP | `methods/bo_rep.py` | Periodic updates |
+| SUSTAIN | `methods/sustain.py` | STORM-based |
+| VRBO | `methods/vrbo.py` | SPIDER variance reduction |
+| AccBO | `methods/accbo.py` | Nesterov acceleration |
+| MEHA | `methods/MEHA.py` | Penalty-based |
+| NOVA2 | `methods/NOVA2.py` | Penalty + momentum |
+| NOVA3 | `methods/NOVA3.py` | Penalty + normalized gradient |
+| S-PNGBIO | `methods/s_pngbio.py` | Penalty + normalized gradient |
 
 ## Project Structure
 
 ```
 .
-├── main.py              # Entry point, argument parsing, training loop
-├── data_loader.py       # SNLI / Sent140 dataset loading and preprocessing
+├── main.py              # Entry point (training + per-epoch timing)
+├── data_loader.py       # SNLI dataset loading
 ├── methods/
-│   ├── RNN_net.py       # RNN / NLIRNN model definitions
-│   ├── stocbio.py
-│   ├── ttsa.py
-│   ├── saba.py
-│   ├── ma_soba.py
-│   ├── bo_rep.py
-│   ├── sustain.py
-│   ├── vrbo.py
-│   ├── accbo.py
-│   ├── MEHA.py
-│   ├── NOVA2.py
-│   └── s_pngbio.py
-├── data/                # Pre-processed SNLI pickle files
-├── logs/                # Training logs and results
-├── requirements.txt
-└── README.md
+│   ├── RNN_net.py       # RNN model definitions
+│   ├── run.sh           # Batch run script
+│   └── *.py             # Method implementations
+├── data/                # Pre-processed SNLI pkl files (Git LFS)
+├── logs/                # Training outputs (.txt results, .pt checkpoints, .log console)
+├── figures/             # Visualization output
+├── stats.py             # Generate results report (markdown)
+├── plot_results.py      # Generate visualization figures
+├── tune_nova3.py        # Optuna hyperparameter tuning for NOVA3
+└── requirements.txt
 ```
 
 ## Setup
@@ -59,41 +54,69 @@ pip install -r requirements.txt
 
 ## Usage
 
-Run a specific method:
+### Run a single method
 
 ```bash
-python main.py --methods <method_name> --epoch 20 --seed 2
+python main.py --methods <method> --epoch 20 --seed 2
 ```
 
-Available method names: `stocbio`, `ttsa`, `saba`, `ma-soba`, `bo-rep`, `sustain`, `vrbo`, `accbo`, `meha`, `nova2`, `s-pngbio`
+Available: `stocbio`, `ttsa`, `saba`, `ma-soba`, `bo-rep`, `sustain`, `vrbo`, `accbo`, `meha`, `nova2`, `nova3`, `s-pngbio`
 
-### Key Arguments
+### Run all methods
+
+```bash
+bash methods/run.sh
+```
+
+### Key arguments
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--methods` | `stocbio` | Method to run |
-| `--epoch` | `20` | Number of outer epochs |
+| `--methods` | `stocbio` | Method name |
+| `--epoch` | `20` | Number of epochs |
 | `--seed` | `2` | Random seed |
 | `--noise_rate` | `0.1` | Label noise rate |
-| `--inner_batch_size` | `16` | Training batch size |
-| `--data` | `snli` | Dataset (snli) |
+| `--inner_batch_size` | `512` | Training batch size |
 
-### Run All Methods
+### Generate results report
 
 ```bash
-# Serial execution (recommended)
-for method in stocbio ttsa saba ma-soba bo-rep sustain vrbo accbo meha nova2 s-pngbio; do
-    python main.py --methods $method --epoch 20 --seed 2
-done
+python stats.py                      # -> results.md
+python stats.py --output report.md   # custom output path
 ```
 
-## Data
+### Generate figures
 
-The SNLI dataset is pre-processed and stored as pickle files in `data/`. The pre-processing includes GloVe word embeddings (300d) and label noise injection.
+```bash
+python plot_results.py    # -> figures/fig1~fig6
+```
 
-## Output
+### Hyperparameter tuning (NOVA3)
 
-Training logs are saved to `logs/` with format:
-`{method}_outlr{lr}_inlr{lr}_seed{seed}_{date}.txt`
+```bash
+python tune_nova3.py --n_trials 50 --epoch 5     # quick search
+python tune_nova3.py --n_trials 200 --epoch 20    # thorough search
+```
 
-Each log contains: experiment config, train/test accuracy, train/test loss, and total time.
+## Output Format
+
+Each run produces 3 files in `logs/`:
+
+| File | Content |
+|------|---------|
+| `{method}_outlr{lr}_inlr{lr}_seed{s}_{date}.txt` | Results dict (config, acc, loss, time, epoch_times) |
+| `{method}_outlr{lr}_inlr{lr}_seed{s}_{date}.pt` | PyTorch checkpoint (train/test acc & loss arrays) |
+| `{method}_e20.log` | Console output (training steps, per-epoch summary) |
+
+## Console Output
+
+Per epoch:
+```
+[epoch/epochs]:0/20
+Step 0 | Task Loss: 6.17 | Acc: 0.00
+Step 100 | Task Loss: 1.81 | Acc: 0.32
+...
+  Train Loss: 1.1486 | Train Acc: 0.3893
+  Test  Loss: 1.0562 | Test  Acc: 0.4417
+  Time: train=85.3s test=12.1s total=97.4s cumul=97.4s (0.03h)
+```

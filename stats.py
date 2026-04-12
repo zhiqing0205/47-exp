@@ -35,6 +35,11 @@ def parse_log(filepath):
         if m and epoch >= 0:
             test_results[epoch] = (float(m.group(1)), float(m.group(2)))
 
+        # New format from updated main.py
+        m = re.match(r'\s+Test\s+Loss:\s+([\d.]+)\s+\|\s+Test\s+Acc:\s+([\d.]+)', line)
+        if m and epoch >= 0:
+            test_results[epoch] = (float(m.group(1)), float(m.group(2)))
+
     return train_last, test_results, max_epoch
 
 

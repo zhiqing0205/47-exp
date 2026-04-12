@@ -123,7 +123,7 @@ class Learner(nn.Module):
             task_accs.append(acc)
             task_loss.append(q_loss.detach().cpu())
             torch.cuda.empty_cache()
-            if step % 10 == 0:
+            if step % 100 == 0:
                 print(f'Step {step} | Task Loss: {np.mean(task_loss):.4f} | Acc: {np.mean(task_accs):.4f}')
         return np.mean(task_accs),  np.mean(task_loss)
 
@@ -145,7 +145,6 @@ class Learner(nn.Module):
             task_accs.append(acc)
             task_loss.append(q_loss.detach().cpu())
             torch.cuda.empty_cache()
-            print(f'Task loss: {np.mean(task_loss):.4f}, Task acc: {np.mean(task_accs):.4f}')
         return np.mean(task_accs), np.mean(task_loss)
 
     def hypergradient(self, args, hvp, loss, query_batch):
