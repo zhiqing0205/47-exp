@@ -9,7 +9,7 @@ conda activate bilevel 2>/dev/null
 
 EPOCH=${1:-20}
 SEED=${2:-2}
-METHODS=("stocbio" "ttsa" "saba" "ma-soba" "bo-rep" "sustain" "vrbo" "accbo")
+METHODS=("ma-soba" "saba" "ttsa" "bo-rep" "stocbio" "sustain" "accbo" "vrbo")
 
 mkdir -p logs
 
