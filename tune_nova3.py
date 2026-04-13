@@ -62,8 +62,8 @@ def create_objective(n_epochs, batch_size, seed):
         # c_t -> penalty scaling
         outer_update_lr = trial.suggest_float("outer_update_lr", 1e-4, 0.1, log=True)
         inner_update_lr = trial.suggest_float("inner_update_lr", 1e-3, 0.1, log=True)
-        gamma = trial.suggest_float("gamma", 0.05, 2.0, log=True)
-        beta = trial.suggest_float("beta", 0.8, 0.99)
+        gamma = trial.suggest_float("gamma", 10.0, 100.0, log=True)
+        beta = trial.suggest_float("beta", 0.1, 0.99)
         z_lr = trial.suggest_float("z_lr", 1e-4, 0.1, log=True)
         c_t = trial.suggest_float("c_t", 0.5, 5.0, log=True)
 
@@ -155,8 +155,8 @@ def main():
     print(f"Search space:")
     print(f"  outer_update_lr (alpha_t): [1e-4, 0.1] (log)")
     print(f"  inner_update_lr (beta_t):  [1e-3, 0.1] (log)")
-    print(f"  gamma (proximal):          [0.05, 2.0] (log)")
-    print(f"  beta  (momentum rho/nu):   [0.8, 0.99]")
+    print(f"  gamma (proximal):          [10.0, 100.0] (log)")
+    print(f"  beta  (momentum rho/nu):   [0.1, 0.99]")
     print(f"  z_lr  (eta_t, z lr):       [1e-4, 0.1] (log)")
     print(f"  c_t   (penalty scaling):   [0.5, 5.0] (log)")
     print()
