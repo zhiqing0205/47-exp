@@ -43,10 +43,11 @@ class Learner(nn.Module):
         self.d_x = torch.zeros_like(self.lambda_x) 
         self.d_y = [torch.zeros_like(p) for p in self.inner_model.parameters()] 
 
-        self.gamma = args.gamma   
-        self.rho = args.beta      
-        self.nu = args.beta       
-        self.c_t = 1.0            
+        self.gamma = args.gamma
+        self.rho = args.beta
+        self.nu = args.beta
+        self.c_t = 1.0
+        self.clip_grad = 1.0
         self.criterion = nn.CrossEntropyLoss(reduction='none').to(self.device)
 
     def _set_model_params(self, flat_params):
@@ -85,7 +86,10 @@ class Learner(nn.Module):
             # z 动量逻辑
             curr_grad_z = grad_g_z_flat + (1.0 / self.gamma) * (self.z - y_flat)
             self.d_z = self.rho * self.d_z + (1 - self.rho) * curr_grad_z
-            self.z.data -= eta_t * self.d_z # 不归一化
+            dz_norm = torch.norm(self.d_z)
+            if dz_norm > self.clip_grad:
+                self.d_z = self.d_z * self.clip_grad / dz_norm
+            self.z.data -= eta_t * self.d_z
             
             for p, val in zip(self.inner_model.parameters(), y_state): p.data.copy_(val)
 
@@ -135,6 +139,9 @@ class Learner(nn.Module):
                 z_i = self.z[offset : offset + numel].view(p.shape)
                 d_tilde_y_i = (1.0 / self.c_t) * grads_f_y[i] + grads_g_y[i] + (1.0 / self.gamma) * (z_i - p)
                 self.d_y[i] = self.nu * d_tilde_y_i + (1 - self.nu) * self.d_y[i]
+                dy_norm = torch.norm(self.d_y[i])
+                if dy_norm > self.clip_grad:
+                    self.d_y[i] = self.d_y[i] * self.clip_grad / dy_norm
                 p.data -= beta_t * self.d_y[i]
                 offset += numel
 
