@@ -59,18 +59,10 @@ class Learner(nn.Module):
         task_accs, task_loss = [], []
         eta_t, alpha_t, beta_t = self.args.nu, self.args.outer_update_lr, self.args.inner_update_lr
 
-        train_iter = iter(train_loader)
-        val_iter = iter(val_loader) if val_loader is not None else iter(train_loader)
+        for step, data_g in enumerate(train_loader):
+            data_f = next(iter(val_loader))
+            data_gh = next(iter(train_loader))
 
-        for step in range(len(train_loader) // 2):
-            try:
-                data_f = next(val_iter)     
-                data_g = next(train_iter)   
-                data_gh = next(train_iter)  
-            except StopIteration:
-                break
-
-            # 提前搬运 labels 和 indices，确保在 GPU
             labels_f = data_f[1].to(self.device)
             labels_g = data_g[1].to(self.device)
             labels_gh = data_gh[1].to(self.device)
@@ -83,7 +75,8 @@ class Learner(nn.Module):
             
             self.inner_model.zero_grad()
             out_gh = predict(self.inner_model, data_gh[0])
-            loss_gh = torch.mean(torch.sigmoid(self.lambda_x[idx_gh]) * self.criterion(out_gh, labels_gh))
+            loss_gh = torch.mean(torch.sigmoid(self.lambda_x[idx_gh]) * self.criterion(out_gh, labels_gh)) + 0.0001 * sum(
+                [x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
             grads_gh = torch.autograd.grad(loss_gh, self.inner_model.parameters())
             grad_g_z_flat = torch.cat([g.detach().view(-1, 1) for g in grads_gh])
             
@@ -99,19 +92,22 @@ class Learner(nn.Module):
             self.inner_model.zero_grad()
             # 1. ∇1 f(x, y)
             out_f = predict(self.inner_model, data_f[0])
-            loss_f = torch.mean(self.criterion(out_f, labels_f))
+            loss_f = torch.mean(self.criterion(out_f, labels_f)) + 0.0001 * sum(
+                [x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
             grad_f_x_tuple = torch.autograd.grad(loss_f, self.lambda_x, retain_graph=True, allow_unused=True)
             grad_f_x = grad_f_x_tuple[0] if grad_f_x_tuple[0] is not None else torch.zeros_like(self.lambda_x)
             
             # 2. ∇1 g(x, y)
             out_g = predict(self.inner_model, data_g[0])
-            loss_g = torch.mean(torch.sigmoid(self.lambda_x[idx_g]) * self.criterion(out_g, labels_g))
+            loss_g = torch.mean(torch.sigmoid(self.lambda_x[idx_g]) * self.criterion(out_g, labels_g)) + 0.0001 * sum(
+                [x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
             grad_g_x_y = torch.autograd.grad(loss_g, self.lambda_x, retain_graph=True)[0]
             
             # 3. ∇1 g(x, z)
             self._set_model_params(self.z)
             out_g_z = predict(self.inner_model, data_g[0])
-            loss_g_z = torch.mean(torch.sigmoid(self.lambda_x[idx_g]) * self.criterion(out_g_z, labels_g))
+            loss_g_z = torch.mean(torch.sigmoid(self.lambda_x[idx_g]) * self.criterion(out_g_z, labels_g)) + 0.0001 * sum(
+                [x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
             grad_g_x_z = torch.autograd.grad(loss_g_z, self.lambda_x)[0]
             
             for p, val in zip(self.inner_model.parameters(), y_state): p.data.copy_(val)
@@ -123,11 +119,13 @@ class Learner(nn.Module):
             # --- Step 6 & 7: Update y (归一化更新) ---
             self.inner_model.zero_grad()
             out_f_new = predict(self.inner_model, data_f[0])
-            loss_f_new = torch.mean(self.criterion(out_f_new, labels_f))
+            loss_f_new = torch.mean(self.criterion(out_f_new, labels_f)) + 0.0001 * sum(
+                [x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
             grads_f_y = torch.autograd.grad(loss_f_new, self.inner_model.parameters(), retain_graph=True)
             
             out_g_new = predict(self.inner_model, data_g[0])
-            loss_g_new = torch.mean(torch.sigmoid(self.lambda_x[idx_g]) * self.criterion(out_g_new, labels_g))
+            loss_g_new = torch.mean(torch.sigmoid(self.lambda_x[idx_g]) * self.criterion(out_g_new, labels_g)) + 0.0001 * sum(
+                [x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
             grads_g_y = torch.autograd.grad(loss_g_new, self.inner_model.parameters())
             
             offset = 0
@@ -136,7 +134,7 @@ class Learner(nn.Module):
                 z_i = self.z[offset : offset + numel].view(p.shape)
                 d_tilde_y_i = (1.0 / self.c_t) * grads_f_y[i] + grads_g_y[i] + (1.0 / self.gamma) * (z_i - p)
                 self.d_y[i] = self.nu * d_tilde_y_i + (1 - self.nu) * self.d_y[i]
-                p.data -= beta_t * (self.d_y[i] / (torch.norm(self.d_y[i]) + 1e-8))
+                p.data -= beta_t * self.d_y[i]
                 offset += numel
 
             task_accs.append(self.get_accuracy(out_f_new, labels_f))
