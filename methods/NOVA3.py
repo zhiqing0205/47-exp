@@ -12,9 +12,10 @@ def predict(net, inputs):
     return outputs
 
 class Learner(nn.Module):
-    def __init__(self, args, training_size):
+    def __init__(self, args, training_size, verbose=True):
         super(Learner, self).__init__()
         self.args = args
+        self.verbose = verbose
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.training_size = training_size
 
@@ -140,7 +141,7 @@ class Learner(nn.Module):
             task_accs.append(self.get_accuracy(out_f_new, labels_f))
             task_loss.append(loss_f_new.item())
             torch.cuda.empty_cache()
-            if step % 100 == 0:
+            if self.verbose and step % 100 == 0:
                 print(f'Step {step} | Task Loss: {np.mean(task_loss):.4f} | Acc: {np.mean(task_accs):.4f}')
 
         return np.mean(task_accs), np.mean(task_loss)

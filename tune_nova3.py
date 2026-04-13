@@ -77,8 +77,7 @@ def create_objective(n_epochs, batch_size, seed):
         )
 
         try:
-            learner = NOVA3.Learner(args, training_size)
-            # Override c_t
+            learner = NOVA3.Learner(args, training_size, verbose=False)
             learner.c_t = c_t
         except Exception as e:
             print(f"  Trial {trial.number}: init failed: {e}")
@@ -100,8 +99,7 @@ def create_objective(n_epochs, batch_size, seed):
             test_acc, test_loss = learner.test(test_loader)
             best_test_acc = max(best_test_acc, test_acc)
 
-            print(f"  Trial {trial.number} | Epoch {epoch}/{n_epochs} | "
-                  f"Train Acc: {train_acc:.4f} | Test Acc: {test_acc:.4f} | Best: {best_test_acc:.4f}")
+            print(f"  T{trial.number} ep{epoch}/{n_epochs} | TrainLoss: {train_loss:.4f} | TestAcc: {test_acc:.4f} | Best: {best_test_acc:.4f}")
 
             # Report intermediate value for pruning
             trial.report(test_acc, epoch)
