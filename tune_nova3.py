@@ -81,6 +81,9 @@ def create_objective(n_epochs, batch_size, seed):
             seed=seed,
         )
 
+        print(f"\n  T{trial.number} params: olr={outer_update_lr:.5f} ilr={inner_update_lr:.5f} "
+              f"gamma={gamma:.3f} beta={beta:.3f} z_lr={z_lr:.5f} c_t={c_t:.3f}")
+
         try:
             learner = NOVA3.Learner(args, training_size, verbose=False)
             learner.c_t = c_t
