@@ -54,12 +54,17 @@ def create_objective(n_epochs, batch_size, seed):
         training_size = train.dataset_size
 
         # === Hyperparameter search space ===
-        # Narrowed based on prior search + code fixes (L2 reg, full data, no y-norm)
+        # outer_update_lr -> alpha_t (x learning rate)
+        # inner_update_lr -> beta_t (y learning rate)
+        # gamma -> proximal penalty coefficient
+        # beta -> rho & nu (momentum for x/z and y, shared)
+        # nu -> eta_t (z learning rate)
+        # c_t -> penalty scaling
         outer_update_lr = trial.suggest_float("outer_update_lr", 1e-4, 0.1, log=True)
         inner_update_lr = trial.suggest_float("inner_update_lr", 1e-3, 0.1, log=True)
         gamma = trial.suggest_float("gamma", 0.05, 2.0, log=True)
         beta = trial.suggest_float("beta", 0.8, 0.99)
-        nu = trial.suggest_float("nu", 1e-3, 0.5, log=True)
+        z_lr = trial.suggest_float("z_lr", 1e-4, 0.1, log=True)
         c_t = trial.suggest_float("c_t", 0.5, 5.0, log=True)
 
         args = argparse.Namespace(
@@ -69,7 +74,7 @@ def create_objective(n_epochs, batch_size, seed):
             inner_update_lr=inner_update_lr,
             gamma=gamma,
             beta=beta,
-            nu=nu,
+            nu=z_lr,
             inner_batch_size=batch_size,
             batch_size=16,
             noise_rate=0.1,
@@ -81,6 +86,7 @@ def create_objective(n_epochs, batch_size, seed):
             learner.c_t = c_t
         except Exception as e:
             print(f"  Trial {trial.number}: init failed: {e}")
+            torch.cuda.empty_cache()
             return 0.0
 
         best_test_acc = 0.0
@@ -94,6 +100,8 @@ def create_objective(n_epochs, batch_size, seed):
                 train_acc, train_loss = learner(train_loader, val_loader, training=True, epoch=epoch)
             except Exception as e:
                 print(f"  Trial {trial.number} epoch {epoch}: train failed: {e}")
+                del learner
+                torch.cuda.empty_cache()
                 return best_test_acc
 
             test_acc, test_loss = learner.test(test_loader)
@@ -108,8 +116,9 @@ def create_objective(n_epochs, batch_size, seed):
 
         print(f"  Trial {trial.number}: best_test_acc={best_test_acc:.4f} | "
               f"olr={outer_update_lr:.4f} ilr={inner_update_lr:.4f} "
-              f"gamma={gamma:.4f} beta={beta:.3f} nu={nu:.4f} c_t={c_t:.3f}")
+              f"gamma={gamma:.4f} beta={beta:.3f} z_lr={z_lr:.4f} c_t={c_t:.3f}")
 
+        del learner
         torch.cuda.empty_cache()
         return best_test_acc
 
@@ -143,13 +152,13 @@ def main():
     print(f"=== NOVA3 Hyperparameter Tuning ===")
     print(f"Trials: {args.n_trials}, Epochs/trial: {args.epoch}, Batch size: {args.batch_size}")
     print(f"Study DB: {args.db}")
-    print(f"Search space (narrowed):")
-    print(f"  outer_update_lr: [1e-4, 0.1] (log)")
-    print(f"  inner_update_lr: [1e-3, 0.1] (log)")
-    print(f"  gamma:           [0.05, 2.0] (log)")
-    print(f"  beta:            [0.8, 0.99]")
-    print(f"  nu:              [1e-3, 0.5] (log)")
-    print(f"  c_t:             [0.5, 5.0] (log)")
+    print(f"Search space:")
+    print(f"  outer_update_lr (alpha_t): [1e-4, 0.1] (log)")
+    print(f"  inner_update_lr (beta_t):  [1e-3, 0.1] (log)")
+    print(f"  gamma (proximal):          [0.05, 2.0] (log)")
+    print(f"  beta  (momentum rho/nu):   [0.8, 0.99]")
+    print(f"  z_lr  (eta_t, z lr):       [1e-4, 0.1] (log)")
+    print(f"  c_t   (penalty scaling):   [0.5, 5.0] (log)")
     print()
 
     study.optimize(objective, n_trials=args.n_trials, show_progress_bar=True)
@@ -171,13 +180,13 @@ def main():
     completed = [t for t in study.trials if t.state == TrialState.COMPLETE]
     completed.sort(key=lambda t: t.value, reverse=True)
     print(f"\nTop 10 Trials (out of {len(completed)} completed):")
-    print(f"{'Rank':>4} | {'Trial':>5} | {'Test Acc':>8} | {'olr':>8} | {'ilr':>8} | {'gamma':>8} | {'beta':>5} | {'nu':>8} | {'c_t':>6}")
+    print(f"{'Rank':>4} | {'Trial':>5} | {'Test Acc':>8} | {'olr':>8} | {'ilr':>8} | {'gamma':>8} | {'beta':>5} | {'z_lr':>8} | {'c_t':>6}")
     print("-" * 80)
     for i, t in enumerate(completed[:10]):
         p = t.params
         print(f"{i+1:>4} | {t.number:>5} | {t.value:>8.4f} | {p['outer_update_lr']:>8.4f} | "
               f"{p['inner_update_lr']:>8.4f} | {p['gamma']:>8.4f} | {p['beta']:>5.3f} | "
-              f"{p['nu']:>8.4f} | {p['c_t']:>6.3f}")
+              f"{p['z_lr']:>8.4f} | {p['c_t']:>6.3f}")
 
     # Save results
     result_file = f"logs/nova3_tune_results.txt"
@@ -198,8 +207,7 @@ def main():
     print(f"        args.inner_update_lr = {bp['inner_update_lr']}")
     print(f"        args.gamma = {bp['gamma']}")
     print(f"        args.beta = {bp['beta']}")
-    print(f"        args.nu = {bp['nu']}")
-    print(f"        # c_t = {bp['c_t']}  (set in Learner.__init__)")
+    print(f"        args.nu = {bp['z_lr']}")
     print(f"        learner = NOVA3.Learner(args, training_size)")
     print(f"        learner.c_t = {bp['c_t']}")
 
