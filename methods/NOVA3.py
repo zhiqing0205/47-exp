@@ -84,8 +84,8 @@ class Learner(nn.Module):
             
             y_flat = torch.cat([p.view(-1, 1) for p in y_state])
             # z 动量逻辑
-            curr_grad_z = grad_g_z_flat + (1.0 / self.gamma) * (self.z - y_flat)
-            self.d_z = self.rho * self.d_z + (1 - self.rho) * curr_grad_z
+            curr_grad_z = grad_g_z_flat + (1.0 / self.gamma) * (self.z.detach() - y_flat)
+            self.d_z = (self.rho * self.d_z + (1 - self.rho) * curr_grad_z).detach()
             dz_norm = torch.norm(self.d_z)
             if dz_norm > self.clip_grad:
                 self.d_z = self.d_z * self.clip_grad / dz_norm
@@ -99,14 +99,14 @@ class Learner(nn.Module):
             out_f = predict(self.inner_model, data_f[0])
             loss_f = torch.mean(self.criterion(out_f, labels_f)) + 0.0001 * sum(
                 [x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
-            grad_f_x_tuple = torch.autograd.grad(loss_f, self.lambda_x, retain_graph=True, allow_unused=True)
+            grad_f_x_tuple = torch.autograd.grad(loss_f, self.lambda_x, allow_unused=True)
             grad_f_x = grad_f_x_tuple[0] if grad_f_x_tuple[0] is not None else torch.zeros_like(self.lambda_x)
-            
+
             # 2. ∇1 g(x, y)
             out_g = predict(self.inner_model, data_g[0])
             loss_g = torch.mean(torch.sigmoid(self.lambda_x[idx_g]) * self.criterion(out_g, labels_g)) + 0.0001 * sum(
                 [x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
-            grad_g_x_y = torch.autograd.grad(loss_g, self.lambda_x, retain_graph=True)[0]
+            grad_g_x_y = torch.autograd.grad(loss_g, self.lambda_x)[0]
             
             # 3. ∇1 g(x, z)
             self._set_model_params(self.z)
@@ -117,8 +117,8 @@ class Learner(nn.Module):
             
             for p, val in zip(self.inner_model.parameters(), y_state): p.data.copy_(val)
 
-            d_tilde_x = (1.0 / self.c_t) * grad_f_x + grad_g_x_y - grad_g_x_z
-            self.d_x = self.rho * self.d_x + (1 - self.rho) * d_tilde_x
+            d_tilde_x = (1.0 / self.c_t) * grad_f_x.detach() + grad_g_x_y.detach() - grad_g_x_z.detach()
+            self.d_x = (self.rho * self.d_x + (1 - self.rho) * d_tilde_x).detach()
             self.lambda_x.data -= alpha_t * (self.d_x / (torch.norm(self.d_x) + 1e-8))
 
             # --- Step 6 & 7: Update y (归一化更新) ---
@@ -126,7 +126,7 @@ class Learner(nn.Module):
             out_f_new = predict(self.inner_model, data_f[0])
             loss_f_new = torch.mean(self.criterion(out_f_new, labels_f)) + 0.0001 * sum(
                 [x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
-            grads_f_y = torch.autograd.grad(loss_f_new, self.inner_model.parameters(), retain_graph=True)
+            grads_f_y = torch.autograd.grad(loss_f_new, self.inner_model.parameters())
             
             out_g_new = predict(self.inner_model, data_g[0])
             loss_g_new = torch.mean(torch.sigmoid(self.lambda_x[idx_g]) * self.criterion(out_g_new, labels_g)) + 0.0001 * sum(
@@ -137,8 +137,8 @@ class Learner(nn.Module):
             for i, p in enumerate(self.inner_model.parameters()):
                 numel = p.numel()
                 z_i = self.z[offset : offset + numel].view(p.shape)
-                d_tilde_y_i = (1.0 / self.c_t) * grads_f_y[i] + grads_g_y[i] + (1.0 / self.gamma) * (z_i - p)
-                self.d_y[i] = self.nu * d_tilde_y_i + (1 - self.nu) * self.d_y[i]
+                d_tilde_y_i = (1.0 / self.c_t) * grads_f_y[i].detach() + grads_g_y[i].detach() + (1.0 / self.gamma) * (z_i.detach() - p.detach())
+                self.d_y[i] = (self.nu * d_tilde_y_i + (1 - self.nu) * self.d_y[i]).detach()
                 dy_norm = torch.norm(self.d_y[i])
                 if dy_norm > self.clip_grad:
                     self.d_y[i] = self.d_y[i] * self.clip_grad / dy_norm
