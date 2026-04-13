@@ -54,12 +54,13 @@ def create_objective(n_epochs, batch_size, seed):
         training_size = train.dataset_size
 
         # === Hyperparameter search space ===
-        outer_update_lr = trial.suggest_float("outer_update_lr", 1e-4, 1.0, log=True)
-        inner_update_lr = trial.suggest_float("inner_update_lr", 1e-4, 1.0, log=True)
-        gamma = trial.suggest_float("gamma", 0.01, 10.0, log=True)
-        beta = trial.suggest_float("beta", 0.5, 0.99)
-        nu = trial.suggest_float("nu", 1e-4, 1.0, log=True)
-        c_t = trial.suggest_float("c_t", 0.1, 10.0, log=True)
+        # Narrowed based on prior search + code fixes (L2 reg, full data, no y-norm)
+        outer_update_lr = trial.suggest_float("outer_update_lr", 1e-4, 0.1, log=True)
+        inner_update_lr = trial.suggest_float("inner_update_lr", 1e-3, 0.1, log=True)
+        gamma = trial.suggest_float("gamma", 0.05, 2.0, log=True)
+        beta = trial.suggest_float("beta", 0.8, 0.99)
+        nu = trial.suggest_float("nu", 1e-3, 0.5, log=True)
+        c_t = trial.suggest_float("c_t", 0.5, 5.0, log=True)
 
         args = argparse.Namespace(
             data='snli', word_embed_dim=300, encoder_dim=512, n_enc_layers=2,
@@ -120,8 +121,8 @@ def main():
     parser.add_argument("--epoch", type=int, default=5, help="Epochs per trial (use fewer for faster search)")
     parser.add_argument("--batch_size", type=int, default=512, help="Batch size")
     parser.add_argument("--seed", type=int, default=2, help="Random seed")
-    parser.add_argument("--study_name", type=str, default="nova3_tune", help="Optuna study name")
-    parser.add_argument("--db", type=str, default="sqlite:///logs/nova3_tune.db", help="Optuna storage DB")
+    parser.add_argument("--study_name", type=str, default="nova3_tune_v2", help="Optuna study name")
+    parser.add_argument("--db", type=str, default="sqlite:///logs/nova3_tune_v2.db", help="Optuna storage DB")
     args = parser.parse_args()
 
     os.makedirs("logs", exist_ok=True)
@@ -141,13 +142,13 @@ def main():
     print(f"=== NOVA3 Hyperparameter Tuning ===")
     print(f"Trials: {args.n_trials}, Epochs/trial: {args.epoch}, Batch size: {args.batch_size}")
     print(f"Study DB: {args.db}")
-    print(f"Search space:")
-    print(f"  outer_update_lr: [1e-4, 1.0] (log)")
-    print(f"  inner_update_lr: [1e-4, 1.0] (log)")
-    print(f"  gamma:           [0.01, 10.0] (log)")
-    print(f"  beta:            [0.5, 0.99]")
-    print(f"  nu:              [1e-4, 1.0] (log)")
-    print(f"  c_t:             [0.1, 10.0] (log)")
+    print(f"Search space (narrowed):")
+    print(f"  outer_update_lr: [1e-4, 0.1] (log)")
+    print(f"  inner_update_lr: [1e-3, 0.1] (log)")
+    print(f"  gamma:           [0.05, 2.0] (log)")
+    print(f"  beta:            [0.8, 0.99]")
+    print(f"  nu:              [1e-3, 0.5] (log)")
+    print(f"  c_t:             [0.5, 5.0] (log)")
     print()
 
     study.optimize(objective, n_trials=args.n_trials, show_progress_bar=True)
