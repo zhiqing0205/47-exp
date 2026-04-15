@@ -52,6 +52,12 @@ class Learner(nn.Module):
         self.warm_start_steps = getattr(args, 'warm_start_steps', 3)
         self.criterion = nn.CrossEntropyLoss(reduction='none').to(self.device)
 
+        # Optimizer + LR scheduler for y
+        self.inner_optimizer = torch.optim.SGD(self.inner_model.parameters(), lr=args.inner_update_lr)
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            self.inner_optimizer, T_max=getattr(args, 'epoch', 25), eta_min=args.inner_update_lr * 0.01
+        )
+
     def _set_model_params(self, flat_params):
         offset = 0
         for p in self.inner_model.parameters():
@@ -61,11 +67,9 @@ class Learner(nn.Module):
 
     def forward(self, train_loader, val_loader=None, training=True, epoch=0):
         task_accs, task_loss = [], []
-        # Learning rate decay: reduce by factor at later epochs
-        decay = (1.0 / (1 + epoch * 0.05))
-        eta_t = self.args.nu * decay
-        alpha_t = self.args.outer_update_lr * decay
-        beta_t = self.args.inner_update_lr * decay
+        eta_t = self.args.nu
+        alpha_t = self.args.outer_update_lr
+        beta_t = self.args.inner_update_lr
 
         for step, data_g in enumerate(train_loader):
             data_f = next(iter(val_loader))
@@ -80,15 +84,15 @@ class Learner(nn.Module):
             # --- Inner warm start: periodic extra SGD steps on lower-level ---
             if step % self.warm_start_interval == 0:
                 for _ in range(self.warm_start_steps):
-                    self.inner_model.zero_grad()
+                    self.inner_optimizer.zero_grad()
                     ws_data = next(iter(train_loader))
                     ws_out = predict(self.inner_model, ws_data[0])
                     ws_loss = torch.mean(torch.sigmoid(self.lambda_x[ws_data[2]]) * self.criterion(ws_out, ws_data[1].to(self.device))) + 0.0001 * sum(
                         [x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
                     ws_grads = torch.autograd.grad(ws_loss, self.inner_model.parameters())
-                    with torch.no_grad():
-                        for p, g in zip(self.inner_model.parameters(), ws_grads):
-                            p.data -= beta_t * g
+                    for p, g in zip(self.inner_model.parameters(), ws_grads):
+                        p.grad = g
+                    self.inner_optimizer.step()
 
             # --- Step 3: Update z (动量更新，非归一化) ---
             y_state = [p.data.clone() for p in self.inner_model.parameters()]
@@ -170,6 +174,7 @@ class Learner(nn.Module):
             if self.verbose and step % 100 == 0:
                 print(f'Step {step} | Task Loss: {np.mean(task_loss):.4f} | Acc: {np.mean(task_accs):.4f}')
 
+        self.scheduler.step()
         return np.mean(task_accs), np.mean(task_loss)
 
     def get_accuracy(self, outputs, labels):
