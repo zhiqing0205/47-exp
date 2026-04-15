@@ -47,7 +47,9 @@ class Learner(nn.Module):
         self.rho = args.beta
         self.nu = args.beta
         self.c_t = 1.0
-        self.clip_grad = 1.0
+        self.clip_grad = 10.0
+        self.warm_start_interval = getattr(args, 'warm_start_interval', 5)
+        self.warm_start_steps = getattr(args, 'warm_start_steps', 3)
         self.criterion = nn.CrossEntropyLoss(reduction='none').to(self.device)
 
     def _set_model_params(self, flat_params):
@@ -59,7 +61,11 @@ class Learner(nn.Module):
 
     def forward(self, train_loader, val_loader=None, training=True, epoch=0):
         task_accs, task_loss = [], []
-        eta_t, alpha_t, beta_t = self.args.nu, self.args.outer_update_lr, self.args.inner_update_lr
+        # Learning rate decay: reduce by factor at later epochs
+        decay = (1.0 / (1 + epoch * 0.05))
+        eta_t = self.args.nu * decay
+        alpha_t = self.args.outer_update_lr * decay
+        beta_t = self.args.inner_update_lr * decay
 
         for step, data_g in enumerate(train_loader):
             data_f = next(iter(val_loader))
@@ -70,6 +76,19 @@ class Learner(nn.Module):
             labels_gh = data_gh[1].to(self.device)
             idx_g = data_g[2]
             idx_gh = data_gh[2]
+
+            # --- Inner warm start: periodic extra SGD steps on lower-level ---
+            if step % self.warm_start_interval == 0:
+                for _ in range(self.warm_start_steps):
+                    self.inner_model.zero_grad()
+                    ws_data = next(iter(train_loader))
+                    ws_out = predict(self.inner_model, ws_data[0])
+                    ws_loss = torch.mean(torch.sigmoid(self.lambda_x[ws_data[2]]) * self.criterion(ws_out, ws_data[1].to(self.device))) + 0.0001 * sum(
+                        [x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
+                    ws_grads = torch.autograd.grad(ws_loss, self.inner_model.parameters())
+                    with torch.no_grad():
+                        for p, g in zip(self.inner_model.parameters(), ws_grads):
+                            p.data -= beta_t * g
 
             # --- Step 3: Update z (动量更新，非归一化) ---
             y_state = [p.data.clone() for p in self.inner_model.parameters()]
