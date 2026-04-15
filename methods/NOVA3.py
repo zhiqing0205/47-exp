@@ -67,8 +67,13 @@ class Learner(nn.Module):
 
     def forward(self, train_loader, val_loader=None, training=True, epoch=0):
         task_accs, task_loss = [], []
-        eta_t = self.args.nu
-        alpha_t = self.args.outer_update_lr
+        # All three learning rates decay together via cosine schedule
+        total_epochs = getattr(self.args, 'epoch', 25)
+        import math
+        cosine_factor = 0.5 * (1 + math.cos(math.pi * epoch / total_epochs))  # 1.0 -> 0.0
+        cosine_factor = max(cosine_factor, 0.01)  # floor at 1%
+        eta_t = self.args.nu * cosine_factor
+        alpha_t = self.args.outer_update_lr * cosine_factor
         beta_t = self.args.inner_update_lr
 
         for step, data_g in enumerate(train_loader):
