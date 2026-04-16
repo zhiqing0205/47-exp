@@ -174,11 +174,11 @@ class Learner(nn.Module):
                 'sig_p50': torch.quantile(sx, 0.5).item(),
                 'sig_p90': torch.quantile(sx, 0.9).item(),
             }
-            if self.verbose:
-                print(f"  [lambda_x] lx: mean={lx_stats['lx_mean']:.4f} std={lx_stats['lx_std']:.4f} "
-                      f"range=[{lx_stats['lx_min']:.4f}, {lx_stats['lx_max']:.4f}]")
-                print(f"  [sigmoid]  mean={lx_stats['sig_mean']:.4f} std={lx_stats['sig_std']:.4f} "
-                      f"p10={lx_stats['sig_p10']:.4f} p50={lx_stats['sig_p50']:.4f} p90={lx_stats['sig_p90']:.4f}")
+            # Always print diagnostic (independent of verbose flag)
+            print(f"  [lambda_x] lx: mean={lx_stats['lx_mean']:.4f} std={lx_stats['lx_std']:.4f} "
+                  f"range=[{lx_stats['lx_min']:.4f}, {lx_stats['lx_max']:.4f}]")
+            print(f"  [sigmoid]  mean={lx_stats['sig_mean']:.4f} std={lx_stats['sig_std']:.4f} "
+                  f"p10={lx_stats['sig_p10']:.4f} p50={lx_stats['sig_p50']:.4f} p90={lx_stats['sig_p90']:.4f}")
 
         return np.mean(task_accs), np.mean(task_loss)
 
