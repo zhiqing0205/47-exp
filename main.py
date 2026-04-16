@@ -180,7 +180,6 @@ def main():
         args.inner_update_lr = 5e-2
         args.spider_loops = 2
         args.update_interval = 2
-        args.inner_batch_size = 256
         learner = vrbo.Learner(args, training_size)
 
 

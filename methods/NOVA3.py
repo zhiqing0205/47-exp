@@ -60,6 +60,23 @@ class Learner(nn.Module):
     def forward(self, train_loader, val_loader=None, training=True, epoch=0):
         task_accs, task_loss = [], []
 
+        train_iter = iter(train_loader)
+        val_iter = iter(val_loader) if val_loader else iter(train_loader)
+
+        def next_train():
+            nonlocal train_iter
+            try: return next(train_iter)
+            except StopIteration:
+                train_iter = iter(train_loader)
+                return next(train_iter)
+
+        def next_val():
+            nonlocal val_iter
+            try: return next(val_iter)
+            except StopIteration:
+                val_iter = iter(val_loader)
+                return next(val_iter)
+
         # Polynomial LR decay: lr * (1/(epoch+2))^(1/3)
         decay = (1.0 / (epoch + 2)) ** (1.0 / 3.0)
         eta_t = self.args.nu * decay
@@ -67,8 +84,8 @@ class Learner(nn.Module):
         beta_t = self.args.inner_update_lr * decay
 
         for step, data_g in enumerate(train_loader):
-            data_f = next(iter(val_loader))
-            data_gh = next(iter(train_loader))
+            data_f = next_val()
+            data_gh = next_train()
 
             labels_f = data_f[1].to(self.device)
             labels_g = data_g[1].to(self.device)

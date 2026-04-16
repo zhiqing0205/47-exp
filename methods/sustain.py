@@ -58,18 +58,35 @@ class Learner(nn.Module):
         task_accs = []
         task_loss = []
 
+        train_iter = iter(train_loader)
+        val_iter = iter(val_loader) if val_loader else iter(train_loader)
+
+        def next_train():
+            nonlocal train_iter
+            try: return next(train_iter)
+            except StopIteration:
+                train_iter = iter(train_loader)
+                return next(train_iter)
+
+        def next_val():
+            nonlocal val_iter
+            try: return next(val_iter)
+            except StopIteration:
+                val_iter = iter(val_loader)
+                return next(val_iter)
+
         for step, data in enumerate(train_loader):
             self.inner_model.to(self.device)
             if step == 0 and epoch == 0:
-                input_val, label_id_val, data_indx_val = next(iter(val_loader))
+                input_val, label_id_val, data_indx_val = next_val()
                 outputs_val = predict(self.inner_model, input_val)
                 outer_loss = torch.mean(self.criterion(outputs_val, label_id_val.to(self.device)))
-                grad_x = self.stocbio(self.args, outer_loss, next(iter(train_loader)), next(iter(train_loader)))
+                grad_x = self.stocbio(self.args, outer_loss, next_train(), next_train())
                 self.hypermomentum_x_old.data = grad_x[0].data
                 self.outer_optimizer.step()
                 self.outer_optimizer.zero_grad()
                 self.inner_optimizer.zero_grad()
-                input, label_id, data_indx = next(iter(train_loader))
+                input, label_id, data_indx = next_train()
                 outputs = predict(self.inner_model, input)
                 loss = torch.mean(torch.sigmoid(self.lambda_x[data_indx])*self.criterion(outputs, label_id.to(self.device))) + 0.0001 * sum(
                         [x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
@@ -77,10 +94,10 @@ class Learner(nn.Module):
                 self.lambda_x_old.data = self.lambda_x.data.detach()
                 self.lambda_x.grad = grad_x[0].data
             else:
-                input_val, label_id_val, data_indx_val = next(iter(val_loader))
+                input_val, label_id_val, data_indx_val = next_val()
                 outputs_val = predict(self.inner_model, input_val)
                 outer_loss = torch.mean(self.criterion(outputs_val, label_id_val.to(self.device)))
-                train_batch1, train_batch2 = next(iter(train_loader)), next(iter(train_loader))
+                train_batch1, train_batch2 = next_train(), next_train()
                 grad_x = self.stocbio(self.args, outer_loss, train_batch1, train_batch2)[0]
 
                 outputs_val_on_old_model = predict(self.inner_model_old, input_val)
@@ -91,7 +108,7 @@ class Learner(nn.Module):
                 self.hypermomentum_x = grad_x.detach() + (1 - self.beta) * (self.hypermomentum_x_old.detach() - grad_x_on_old_model.detach())
                 self.hypermomentum_x_old.data =  temp_hmx
 
-                input, label_id, data_indx = next(iter(train_loader))
+                input, label_id, data_indx = next_train()
                 outputs = predict(self.inner_model, input)
                 loss = torch.mean(torch.sigmoid(self.lambda_x[data_indx]) * self.criterion(outputs, label_id.to(
                     self.device))) + 0.0001 * sum(

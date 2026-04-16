@@ -52,6 +52,22 @@ class Learner(nn.Module):
         task_accs = []
         task_loss = []
         num_inner_update_step = self.inner_update_step
+        train_iter = iter(train_loader)
+        val_iter = iter(val_loader)
+
+        def next_train():
+            nonlocal train_iter
+            try: return next(train_iter)
+            except StopIteration:
+                train_iter = iter(train_loader)
+                return next(train_iter)
+
+        def next_val():
+            nonlocal val_iter
+            try: return next(val_iter)
+            except StopIteration:
+                val_iter = iter(val_loader)
+                return next(val_iter)
 
         for step, data in enumerate(train_loader):
             self.inner_model.to(self.device)
@@ -64,7 +80,7 @@ class Learner(nn.Module):
                         temp_p = p.data.clone()
                         p.data += self.gamma * (p.data - po.data)
                         po.data = temp_p
-                    input, label_id, data_indx = next(iter(train_loader))
+                    input, label_id, data_indx = next_train()
                     outputs = predict(self.inner_model, input)
                     loss = torch.mean(torch.sigmoid(self.lambda_x[data_indx])*self.criterion(outputs, label_id.to(self.device))) + 0.0001 * sum(
                             [x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
@@ -75,11 +91,11 @@ class Learner(nn.Module):
             for y_hat, y in zip(self.y_hat, self.y):
                 y_hat.data = (1-self.args.tau) * y_hat.data + self.args.tau * y.data
 
-            q_input, q_label_id,q_indx = next(iter(val_loader))
+            q_input, q_label_id,q_indx = next_val()
             q_outputs = predict(self.inner_model, q_input)
             q_loss = torch.mean(self.criterion(q_outputs, q_label_id.to(self.device)))
             # calculate the neumann series anb hypergradient
-            self.neumann_series(self.args, q_loss, next(iter(train_loader)), next(iter(train_loader)))
+            self.neumann_series(self.args, q_loss, next_train(), next_train())
             for i, param in enumerate(self.lambda_x):
                 # gradient normalization
                 param.grad = self.hypermomentum_x[i]/self.hypermomentum_x[i].norm()
