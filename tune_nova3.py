@@ -65,7 +65,7 @@ def create_objective(n_epochs, batch_size, seed):
         gamma = trial.suggest_float("gamma", 10.0, 100.0, log=True)
         beta = trial.suggest_float("beta", 0.1, 0.99)
         z_lr = trial.suggest_float("z_lr", 1e-4, 0.1, log=True)
-        c_t = trial.suggest_float("c_t", 0.5, 5.0, log=True)
+        c_t = trial.suggest_float("c_t", 1.0, 5.0, log=True)
 
         args = argparse.Namespace(
             data='snli', word_embed_dim=300, encoder_dim=512, n_enc_layers=2,
@@ -86,8 +86,7 @@ def create_objective(n_epochs, batch_size, seed):
 
         try:
             learner = NOVA3.Learner(args, training_size, verbose=False)
-            learner.c_t = c_t
-        except Exception as e:
+            learner.c_t = c_t        except Exception as e:
             print(f"  Trial {trial.number}: init failed: {e}")
             torch.cuda.empty_cache()
             return 0.0
@@ -134,8 +133,8 @@ def main():
     parser.add_argument("--epoch", type=int, default=5, help="Epochs per trial (use fewer for faster search)")
     parser.add_argument("--batch_size", type=int, default=512, help="Batch size")
     parser.add_argument("--seed", type=int, default=2, help="Random seed")
-    parser.add_argument("--study_name", type=str, default="nova3_tune_v3", help="Optuna study name")
-    parser.add_argument("--db", type=str, default="sqlite:///logs/nova3_tune_v3.db", help="Optuna storage DB")
+    parser.add_argument("--study_name", type=str, default="nova3_tune_v4", help="Optuna study name")
+    parser.add_argument("--db", type=str, default="sqlite:///logs/nova3_tune_v4.db", help="Optuna storage DB")
     args = parser.parse_args()
 
     os.makedirs("logs", exist_ok=True)
@@ -161,7 +160,7 @@ def main():
     print(f"  gamma (proximal):          [10.0, 100.0] (log)")
     print(f"  beta  (momentum rho/nu):   [0.1, 0.99]")
     print(f"  z_lr  (eta_t, z lr):       [1e-4, 0.1] (log)")
-    print(f"  c_t   (penalty scaling):   [0.5, 5.0] (log)")
+    print(f"  c_t   (penalty scaling):   [1.0, 5.0] (log)")
     print()
 
     study.optimize(objective, n_trials=args.n_trials, show_progress_bar=True)

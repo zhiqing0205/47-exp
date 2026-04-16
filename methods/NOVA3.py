@@ -1,4 +1,5 @@
 import torch
+import math
 from torch import nn
 from torch.nn import functional as F
 import numpy as np
@@ -19,7 +20,6 @@ class Learner(nn.Module):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.training_size = training_size
 
-        # 1. 初始化内部模型 y
         self.inner_model = NLIRNN(
             word_embed_dim=args.word_embed_dim,
             encoder_dim=args.encoder_dim,
@@ -29,34 +29,23 @@ class Learner(nn.Module):
             pool_type=args.pool_type, linear_fc=args.linear_fc
         ).to(self.device)
 
-        # 2. 初始化超参数 x (lambda_x)
         self.lambda_x = torch.ones(self.training_size, requires_grad=True, device=self.device)
 
-        # 3. 初始化辅助变量 z (扁平化存储)
         param_count = sum(p.numel() for p in self.inner_model.parameters())
         self.z = torch.zeros(param_count, 1, device=self.device)
         with torch.no_grad():
             self.z.copy_(torch.cat([p.view(-1, 1) for p in self.inner_model.parameters()]))
 
-        # 4. 初始化动量缓存 (新逻辑：z 加入动量但不归一化)
-        self.d_z = torch.zeros_like(self.z)       
-        self.d_x = torch.zeros_like(self.lambda_x) 
-        self.d_y = [torch.zeros_like(p) for p in self.inner_model.parameters()] 
+        self.d_z = torch.zeros_like(self.z)
+        self.d_x = torch.zeros_like(self.lambda_x)
+        self.d_y = [torch.zeros_like(p) for p in self.inner_model.parameters()]
 
         self.gamma = args.gamma
         self.rho = args.beta
         self.nu = args.beta
         self.c_t = 1.0
-        self.clip_grad = 10.0
-        self.warm_start_interval = getattr(args, 'warm_start_interval', 5)
-        self.warm_start_steps = getattr(args, 'warm_start_steps', 3)
+        self.clip_grad = 1.0
         self.criterion = nn.CrossEntropyLoss(reduction='none').to(self.device)
-
-        # Optimizer + LR scheduler for y
-        self.inner_optimizer = torch.optim.SGD(self.inner_model.parameters(), lr=args.inner_update_lr)
-        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            self.inner_optimizer, T_max=getattr(args, 'epoch', 25), eta_min=args.inner_update_lr * 0.01
-        )
 
     def _set_model_params(self, flat_params):
         offset = 0
@@ -65,16 +54,17 @@ class Learner(nn.Module):
             p.data.copy_(flat_params[offset : offset + numel].view(p.shape))
             offset += numel
 
+    def _reg(self):
+        return 0.0001 * sum([x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
+
     def forward(self, train_loader, val_loader=None, training=True, epoch=0):
         task_accs, task_loss = [], []
-        # All three learning rates decay together via cosine schedule
-        total_epochs = getattr(self.args, 'epoch', 25)
-        import math
-        cosine_factor = 0.5 * (1 + math.cos(math.pi * epoch / total_epochs))  # 1.0 -> 0.0
-        cosine_factor = max(cosine_factor, 0.01)  # floor at 1%
-        eta_t = self.args.nu * cosine_factor
-        alpha_t = self.args.outer_update_lr * cosine_factor
-        beta_t = self.args.inner_update_lr
+
+        # Polynomial LR decay: lr * (1/(epoch+2))^(1/3)
+        decay = (1.0 / (epoch + 2)) ** (1.0 / 3.0)
+        eta_t = self.args.nu * decay
+        alpha_t = self.args.outer_update_lr * decay
+        beta_t = self.args.inner_update_lr * decay
 
         for step, data_g in enumerate(train_loader):
             data_f = next(iter(val_loader))
@@ -86,86 +76,60 @@ class Learner(nn.Module):
             idx_g = data_g[2]
             idx_gh = data_gh[2]
 
-            # --- Inner warm start: periodic extra SGD steps on lower-level ---
-            if step % self.warm_start_interval == 0:
-                for _ in range(self.warm_start_steps):
-                    self.inner_optimizer.zero_grad()
-                    ws_data = next(iter(train_loader))
-                    ws_out = predict(self.inner_model, ws_data[0])
-                    ws_loss = torch.mean(torch.sigmoid(self.lambda_x[ws_data[2]]) * self.criterion(ws_out, ws_data[1].to(self.device))) + 0.0001 * sum(
-                        [x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
-                    ws_grads = torch.autograd.grad(ws_loss, self.inner_model.parameters())
-                    for p, g in zip(self.inner_model.parameters(), ws_grads):
-                        p.grad = g
-                    self.inner_optimizer.step()
-
-            # --- Step 3: Update z (动量更新，非归一化) ---
+            # --- Update z (momentum) ---
             y_state = [p.data.clone() for p in self.inner_model.parameters()]
-            self._set_model_params(self.z) 
-            
-            self.inner_model.zero_grad()
+            self._set_model_params(self.z)
+
             out_gh = predict(self.inner_model, data_gh[0])
-            loss_gh = torch.mean(torch.sigmoid(self.lambda_x[idx_gh]) * self.criterion(out_gh, labels_gh)) + 0.0001 * sum(
-                [x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
+            loss_gh = torch.mean(torch.sigmoid(self.lambda_x[idx_gh]) * self.criterion(out_gh, labels_gh)) + self._reg()
             grads_gh = torch.autograd.grad(loss_gh, self.inner_model.parameters())
             grad_g_z_flat = torch.cat([g.detach().view(-1, 1) for g in grads_gh])
-            
+
             y_flat = torch.cat([p.view(-1, 1) for p in y_state])
-            # z 动量逻辑
             curr_grad_z = grad_g_z_flat + (1.0 / self.gamma) * (self.z.detach() - y_flat)
             self.d_z = (self.rho * self.d_z + (1 - self.rho) * curr_grad_z).detach()
             dz_norm = torch.norm(self.d_z)
             if dz_norm > self.clip_grad:
                 self.d_z = self.d_z * self.clip_grad / dz_norm
             self.z.data -= eta_t * self.d_z
-            
+
             for p, val in zip(self.inner_model.parameters(), y_state): p.data.copy_(val)
 
-            # --- Step 4 & 5: Update x (归一化更新) ---
-            self.inner_model.zero_grad()
-            # 1. ∇1 f(x, y)
+            # --- Update x (normalized) ---
             out_f = predict(self.inner_model, data_f[0])
-            loss_f = torch.mean(self.criterion(out_f, labels_f)) + 0.0001 * sum(
-                [x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
+            loss_f = torch.mean(self.criterion(out_f, labels_f)) + self._reg()
             grad_f_x_tuple = torch.autograd.grad(loss_f, self.lambda_x, allow_unused=True)
             grad_f_x = grad_f_x_tuple[0] if grad_f_x_tuple[0] is not None else torch.zeros_like(self.lambda_x)
 
-            # 2. ∇1 g(x, y)
             out_g = predict(self.inner_model, data_g[0])
-            loss_g = torch.mean(torch.sigmoid(self.lambda_x[idx_g]) * self.criterion(out_g, labels_g)) + 0.0001 * sum(
-                [x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
+            loss_g = torch.mean(torch.sigmoid(self.lambda_x[idx_g]) * self.criterion(out_g, labels_g)) + self._reg()
             grad_g_x_y = torch.autograd.grad(loss_g, self.lambda_x)[0]
-            
-            # 3. ∇1 g(x, z)
+
             self._set_model_params(self.z)
             out_g_z = predict(self.inner_model, data_g[0])
-            loss_g_z = torch.mean(torch.sigmoid(self.lambda_x[idx_g]) * self.criterion(out_g_z, labels_g)) + 0.0001 * sum(
-                [x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
+            loss_g_z = torch.mean(torch.sigmoid(self.lambda_x[idx_g]) * self.criterion(out_g_z, labels_g)) + self._reg()
             grad_g_x_z = torch.autograd.grad(loss_g_z, self.lambda_x)[0]
-            
+
             for p, val in zip(self.inner_model.parameters(), y_state): p.data.copy_(val)
 
             d_tilde_x = (1.0 / self.c_t) * grad_f_x.detach() + grad_g_x_y.detach() - grad_g_x_z.detach()
             self.d_x = (self.rho * self.d_x + (1 - self.rho) * d_tilde_x).detach()
             self.lambda_x.data -= alpha_t * (self.d_x / (torch.norm(self.d_x) + 1e-8))
 
-            # --- Step 6 & 7: Update y (归一化更新) ---
-            self.inner_model.zero_grad()
+            # --- Update y (momentum + clip) ---
             out_f_new = predict(self.inner_model, data_f[0])
-            loss_f_new = torch.mean(self.criterion(out_f_new, labels_f)) + 0.0001 * sum(
-                [x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
+            loss_f_new = torch.mean(self.criterion(out_f_new, labels_f)) + self._reg()
             grads_f_y = torch.autograd.grad(loss_f_new, self.inner_model.parameters())
-            
+
             out_g_new = predict(self.inner_model, data_g[0])
-            loss_g_new = torch.mean(torch.sigmoid(self.lambda_x[idx_g]) * self.criterion(out_g_new, labels_g)) + 0.0001 * sum(
-                [x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
+            loss_g_new = torch.mean(torch.sigmoid(self.lambda_x[idx_g]) * self.criterion(out_g_new, labels_g)) + self._reg()
             grads_g_y = torch.autograd.grad(loss_g_new, self.inner_model.parameters())
-            
+
             offset = 0
             for i, p in enumerate(self.inner_model.parameters()):
                 numel = p.numel()
-                z_i = self.z[offset : offset + numel].view(p.shape)
-                d_tilde_y_i = (1.0 / self.c_t) * grads_f_y[i].detach() + grads_g_y[i].detach() + (1.0 / self.gamma) * (z_i.detach() - p.detach())
+                z_i = self.z[offset : offset + numel].view(p.shape).detach()
+                d_tilde_y_i = (1.0 / self.c_t) * grads_f_y[i].detach() + grads_g_y[i].detach() + (1.0 / self.gamma) * (z_i - p.detach())
                 self.d_y[i] = (self.nu * d_tilde_y_i + (1 - self.nu) * self.d_y[i]).detach()
                 dy_norm = torch.norm(self.d_y[i])
                 if dy_norm > self.clip_grad:
@@ -179,7 +143,6 @@ class Learner(nn.Module):
             if self.verbose and step % 100 == 0:
                 print(f'Step {step} | Task Loss: {np.mean(task_loss):.4f} | Acc: {np.mean(task_accs):.4f}')
 
-        self.scheduler.step()
         return np.mean(task_accs), np.mean(task_loss)
 
     def get_accuracy(self, outputs, labels):
