@@ -37,14 +37,14 @@ class Learner(nn.Module):
 
         self.d_z = torch.zeros_like(self.z)
         self.d_x = torch.zeros_like(self.lambda_x)
-        self.d_y = [torch.zeros_like(p) for p in self.inner_model.parameters()]
 
         self.gamma = args.gamma
         self.rho = args.beta
-        self.nu = args.beta
         self.c_t = 1.0
-        self.clip_grad = 1.0
         self.criterion = nn.CrossEntropyLoss(reduction='none').to(self.device)
+
+        # Real SGD optimizer for y
+        self.inner_optimizer = torch.optim.SGD(self.inner_model.parameters(), lr=args.inner_update_lr)
 
     def _set_model_params(self, flat_params):
         offset = 0
@@ -76,11 +76,14 @@ class Learner(nn.Module):
                 val_iter = iter(val_loader)
                 return next(val_iter)
 
-        # Delayed polynomial LR decay (V5 best): keep full lr for first 5 epochs, then decay
+        # Delayed polynomial LR decay
         decay = max(0.05, (5.0 / (epoch + 5)) ** 0.5) if epoch >= 5 else 1.0
         eta_t = self.args.nu * decay
         alpha_t = self.args.outer_update_lr * decay
-        beta_t = self.args.inner_update_lr * decay
+        # Update y lr via optimizer param_groups
+        base_ilr = self.args.inner_update_lr
+        for pg in self.inner_optimizer.param_groups:
+            pg['lr'] = base_ilr * decay
 
         for step, data_g in enumerate(train_loader):
             data_f = next_val()
@@ -104,14 +107,11 @@ class Learner(nn.Module):
             y_flat = torch.cat([p.view(-1, 1) for p in y_state])
             curr_grad_z = grad_g_z_flat + (1.0 / self.gamma) * (self.z.detach() - y_flat)
             self.d_z = (self.rho * self.d_z + (1 - self.rho) * curr_grad_z).detach()
-            dz_norm = torch.norm(self.d_z)
-            if dz_norm > self.clip_grad:
-                self.d_z = self.d_z * self.clip_grad / dz_norm
             self.z.data -= eta_t * self.d_z
 
             for p, val in zip(self.inner_model.parameters(), y_state): p.data.copy_(val)
 
-            # --- Update x (normalized) ---
+            # --- Update x (sign-based per-element, like accbo) ---
             out_f = predict(self.inner_model, data_f[0])
             loss_f = torch.mean(self.criterion(out_f, labels_f)) + self._reg()
             grad_f_x_tuple = torch.autograd.grad(loss_f, self.lambda_x, allow_unused=True)
@@ -130,9 +130,10 @@ class Learner(nn.Module):
 
             d_tilde_x = (1.0 / self.c_t) * grad_f_x.detach() + grad_g_x_y.detach() - grad_g_x_z.detach()
             self.d_x = (self.rho * self.d_x + (1 - self.rho) * d_tilde_x).detach()
-            self.lambda_x.data -= alpha_t * (self.d_x / (torch.norm(self.d_x) + 1e-8))
+            self.lambda_x.data -= alpha_t * torch.sign(self.d_x)
 
-            # --- Update y (momentum + clip) ---
+            # --- Update y (real SGD via optimizer) ---
+            self.inner_optimizer.zero_grad()
             out_f_new = predict(self.inner_model, data_f[0])
             loss_f_new = torch.mean(self.criterion(out_f_new, labels_f)) + self._reg()
             grads_f_y = torch.autograd.grad(loss_f_new, self.inner_model.parameters())
@@ -145,13 +146,9 @@ class Learner(nn.Module):
             for i, p in enumerate(self.inner_model.parameters()):
                 numel = p.numel()
                 z_i = self.z[offset : offset + numel].view(p.shape).detach()
-                d_tilde_y_i = (1.0 / self.c_t) * grads_f_y[i].detach() + grads_g_y[i].detach() + (1.0 / self.gamma) * (z_i - p.detach())
-                self.d_y[i] = (self.nu * d_tilde_y_i + (1 - self.nu) * self.d_y[i]).detach()
-                dy_norm = torch.norm(self.d_y[i])
-                if dy_norm > self.clip_grad:
-                    self.d_y[i] = self.d_y[i] * self.clip_grad / dy_norm
-                p.data -= beta_t * self.d_y[i]
+                p.grad = (1.0 / self.c_t) * grads_f_y[i].detach() + grads_g_y[i].detach() + (1.0 / self.gamma) * (z_i - p.detach())
                 offset += numel
+            self.inner_optimizer.step()
 
             task_accs.append(self.get_accuracy(out_f_new, labels_f))
             task_loss.append(loss_f_new.item())
@@ -163,22 +160,9 @@ class Learner(nn.Module):
         with torch.no_grad():
             lx = self.lambda_x.detach()
             sx = torch.sigmoid(lx)
-            lx_stats = {
-                'lx_mean': lx.mean().item(),
-                'lx_std': lx.std().item(),
-                'lx_min': lx.min().item(),
-                'lx_max': lx.max().item(),
-                'sig_mean': sx.mean().item(),
-                'sig_std': sx.std().item(),
-                'sig_p10': torch.quantile(sx, 0.1).item(),
-                'sig_p50': torch.quantile(sx, 0.5).item(),
-                'sig_p90': torch.quantile(sx, 0.9).item(),
-            }
-            # Always print diagnostic (independent of verbose flag)
-            print(f"  [lambda_x] lx: mean={lx_stats['lx_mean']:.4f} std={lx_stats['lx_std']:.4f} "
-                  f"range=[{lx_stats['lx_min']:.4f}, {lx_stats['lx_max']:.4f}]")
-            print(f"  [sigmoid]  mean={lx_stats['sig_mean']:.4f} std={lx_stats['sig_std']:.4f} "
-                  f"p10={lx_stats['sig_p10']:.4f} p50={lx_stats['sig_p50']:.4f} p90={lx_stats['sig_p90']:.4f}")
+            print(f"  [lambda_x] lx: mean={lx.mean():.4f} std={lx.std():.4f} range=[{lx.min():.4f}, {lx.max():.4f}]")
+            print(f"  [sigmoid]  mean={sx.mean():.4f} std={sx.std():.4f} "
+                  f"p10={torch.quantile(sx, 0.1):.4f} p50={torch.quantile(sx, 0.5):.4f} p90={torch.quantile(sx, 0.9):.4f}")
 
         return np.mean(task_accs), np.mean(task_loss)
 
