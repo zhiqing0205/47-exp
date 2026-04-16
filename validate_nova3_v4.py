@@ -38,10 +38,10 @@ def main():
     }
 
     print("=" * 60)
-    print("NOVA3 V5 validation: delayed LR decay + 60 epochs")
+    print("NOVA3 V6 validation: ReduceLROnPlateau + best model restore")
     print("=" * 60)
-    print(f"V4 result: 73.65% at ep44 (45 epochs, polynomial decay)")
-    print(f"V5 changes: delayed decay (full lr for first 5 ep) + 60 epochs")
+    print(f"V5 result: 73.82% at ep34 (60 epochs, delayed polynomial)")
+    print(f"V6 changes: adaptive LR decay on plateau + restore best model")
     print(f"Params: {BEST_PARAMS}")
     print()
 
@@ -87,26 +87,27 @@ def main():
 
         best_acc = max(best_acc, test_acc)
         ep_time = time.time() - ep_start
-        decay = max(0.05, (5.0 / (epoch + 5)) ** 0.5) if epoch >= 5 else 1.0
-        results.append((epoch, train_loss, test_acc, decay, ep_time))
+        lr_factor = learner.lr_decay_factor
+        results.append((epoch, train_loss, test_acc, lr_factor, ep_time))
 
         print(f"ep{epoch:>2}/{n_epochs} | TrainLoss: {train_loss:.4f} | TestAcc: {test_acc:.4f} | "
-              f"Best: {best_acc:.4f} | decay={decay:.3f} | {ep_time:.0f}s")
+              f"Best: {best_acc:.4f} | lr_factor={lr_factor:.3f} | {ep_time:.0f}s")
 
     total_time = (time.time() - st) / 3600
     print()
     print("=" * 60)
     print(f"Total time: {total_time:.2f}h")
-    print(f"V5 Best Test Acc: {best_acc:.4f}")
+    print(f"V6 Best Test Acc: {best_acc:.4f}")
+    print(f"V5 Reference:     0.7382 (60 epochs, delayed polynomial)")
     print(f"V4 Reference:     0.7365 (45 epochs, polynomial)")
     print(f"V2 Reference:     0.7269 (25 epochs, no decay)")
-    diff = best_acc - 0.7365
+    diff = best_acc - 0.7382
     if diff > 0.005:
-        verdict = f"DELAYED DECAY HELPS (+{diff*100:.2f}%)"
+        verdict = f"ADAPTIVE LR HELPS (+{diff*100:.2f}%)"
     elif diff < -0.005:
-        verdict = f"DELAYED DECAY HURTS ({diff*100:.2f}%)"
+        verdict = f"ADAPTIVE LR HURTS ({diff*100:.2f}%)"
     else:
-        verdict = f"DELAYED DECAY NEUTRAL ({diff*100:+.2f}%)"
+        verdict = f"ADAPTIVE LR NEUTRAL ({diff*100:+.2f}%)"
     print(f"Verdict: {verdict}")
     if best_acc >= 0.75:
         print(f">>> TARGET 75% REACHED! <<<")

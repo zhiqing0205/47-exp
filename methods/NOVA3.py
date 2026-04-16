@@ -1,5 +1,6 @@
 import torch
 import math
+import copy
 from torch import nn
 from torch.nn import functional as F
 import numpy as np
@@ -47,6 +48,17 @@ class Learner(nn.Module):
         self.clip_grad = 1.0
         self.criterion = nn.CrossEntropyLoss(reduction='none').to(self.device)
 
+        # ReduceLROnPlateau state (self-managed, no main.py changes needed)
+        self.lr_decay_factor = 1.0
+        self.best_test_acc = 0.0
+        self.patience_counter = 0
+        self.patience = getattr(args, 'lr_patience', 5)
+        self.lr_reduce_factor = getattr(args, 'lr_reduce_factor', 0.5)
+        self.min_lr_factor = 0.01
+
+        # Best model checkpoint for early-stop-like behavior
+        self.best_model_state = None
+
     def _set_model_params(self, flat_params):
         offset = 0
         for p in self.inner_model.parameters():
@@ -56,6 +68,9 @@ class Learner(nn.Module):
 
     def _reg(self):
         return 0.0001 * sum([x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
+
+    def _get_lr(self, base_lr):
+        return base_lr * self.lr_decay_factor
 
     def forward(self, train_loader, val_loader=None, training=True, epoch=0):
         task_accs, task_loss = [], []
@@ -77,12 +92,10 @@ class Learner(nn.Module):
                 val_iter = iter(val_loader)
                 return next(val_iter)
 
-        # Delayed polynomial LR decay: keep full lr for first 5 epochs, then decay
-        # ep0-4: 1.0, ep10: 0.71, ep25: 0.45, ep59: 0.29
-        decay = max(0.05, (5.0 / (epoch + 5)) ** 0.5) if epoch >= 5 else 1.0
-        eta_t = self.args.nu * decay
-        alpha_t = self.args.outer_update_lr * decay
-        beta_t = self.args.inner_update_lr * decay
+        # Learning rates with adaptive decay
+        eta_t = self._get_lr(self.args.nu)
+        alpha_t = self._get_lr(self.args.outer_update_lr)
+        beta_t = self._get_lr(self.args.inner_update_lr)
 
         for step, data_g in enumerate(train_loader):
             data_f = next_val()
@@ -183,4 +196,27 @@ class Learner(nn.Module):
             task_loss.append(loss.detach().cpu())
             torch.cuda.empty_cache()
         self.inner_model.train()
+
+        # ReduceLROnPlateau logic: track test acc, reduce lr on plateau
+        current_acc = np.mean(task_accs)
+        if current_acc > self.best_test_acc + 0.001:
+            self.best_test_acc = current_acc
+            self.patience_counter = 0
+            # Save best model state
+            self.best_model_state = copy.deepcopy(self.inner_model.state_dict())
+        else:
+            self.patience_counter += 1
+            if self.patience_counter >= self.patience:
+                old_factor = self.lr_decay_factor
+                self.lr_decay_factor = max(self.min_lr_factor, self.lr_decay_factor * self.lr_reduce_factor)
+                if old_factor != self.lr_decay_factor:
+                    if self.verbose:
+                        print(f'  >> LR reduced: {old_factor:.4f} -> {self.lr_decay_factor:.4f} (patience={self.patience_counter})')
+                    # Restore best model when reducing lr
+                    if self.best_model_state is not None:
+                        self.inner_model.load_state_dict(self.best_model_state)
+                        if self.verbose:
+                            print(f'  >> Restored best model (acc={self.best_test_acc:.4f})')
+                self.patience_counter = 0
+
         return np.mean(task_accs), np.mean(task_loss)
