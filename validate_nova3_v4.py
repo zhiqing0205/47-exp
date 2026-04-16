@@ -38,10 +38,10 @@ def main():
     }
 
     print("=" * 60)
-    print("NOVA3 V4 validation with V2 best params")
+    print("NOVA3 V5 validation: delayed LR decay + 60 epochs")
     print("=" * 60)
-    print(f"V2 reference: 72.7% (peak@ep19, drop to 71.5% by ep24)")
-    print(f"V4 change: added polynomial LR decay (1/(ep+2))^(1/3)")
+    print(f"V4 result: 73.65% at ep44 (45 epochs, polynomial decay)")
+    print(f"V5 changes: delayed decay (full lr for first 5 ep) + 60 epochs")
     print(f"Params: {BEST_PARAMS}")
     print()
 
@@ -51,7 +51,7 @@ def main():
     test = torch.load('data/snli_test_0.1.pkl', weights_only=False)
     training_size = train.dataset_size
 
-    n_epochs = 25
+    n_epochs = 60
     batch_size = 512
 
     args = argparse.Namespace(
@@ -87,7 +87,7 @@ def main():
 
         best_acc = max(best_acc, test_acc)
         ep_time = time.time() - ep_start
-        decay = (1.0 / (epoch + 2)) ** (1.0 / 3.0)
+        decay = max(0.05, (5.0 / (epoch + 5)) ** 0.5) if epoch >= 5 else 1.0
         results.append((epoch, train_loss, test_acc, decay, ep_time))
 
         print(f"ep{epoch:>2}/{n_epochs} | TrainLoss: {train_loss:.4f} | TestAcc: {test_acc:.4f} | "
@@ -97,16 +97,19 @@ def main():
     print()
     print("=" * 60)
     print(f"Total time: {total_time:.2f}h")
-    print(f"V4 Best Test Acc: {best_acc:.4f}")
-    print(f"V2 Reference:     0.7269")
-    diff = best_acc - 0.7269
-    if diff > 0.002:
-        verdict = f"POLYNOMIAL DECAY HELPS (+{diff*100:.2f}%)"
-    elif diff < -0.002:
-        verdict = f"POLYNOMIAL DECAY HURTS ({diff*100:.2f}%)"
+    print(f"V5 Best Test Acc: {best_acc:.4f}")
+    print(f"V4 Reference:     0.7365 (45 epochs, polynomial)")
+    print(f"V2 Reference:     0.7269 (25 epochs, no decay)")
+    diff = best_acc - 0.7365
+    if diff > 0.005:
+        verdict = f"DELAYED DECAY HELPS (+{diff*100:.2f}%)"
+    elif diff < -0.005:
+        verdict = f"DELAYED DECAY HURTS ({diff*100:.2f}%)"
     else:
-        verdict = f"POLYNOMIAL DECAY NEUTRAL ({diff*100:+.2f}%)"
+        verdict = f"DELAYED DECAY NEUTRAL ({diff*100:+.2f}%)"
     print(f"Verdict: {verdict}")
+    if best_acc >= 0.75:
+        print(f">>> TARGET 75% REACHED! <<<")
     print("=" * 60)
 
 

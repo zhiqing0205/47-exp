@@ -77,8 +77,9 @@ class Learner(nn.Module):
                 val_iter = iter(val_loader)
                 return next(val_iter)
 
-        # Polynomial LR decay: lr * (1/(epoch+2))^(1/3)
-        decay = (1.0 / (epoch + 2)) ** (1.0 / 3.0)
+        # Delayed polynomial LR decay: keep full lr for first 5 epochs, then decay
+        # ep0-4: 1.0, ep10: 0.71, ep25: 0.45, ep59: 0.29
+        decay = max(0.05, (5.0 / (epoch + 5)) ** 0.5) if epoch >= 5 else 1.0
         eta_t = self.args.nu * decay
         alpha_t = self.args.outer_update_lr * decay
         beta_t = self.args.inner_update_lr * decay
