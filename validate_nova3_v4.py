@@ -38,10 +38,10 @@ def main():
     }
 
     print("=" * 60)
-    print("NOVA3 V6 validation: ReduceLROnPlateau + best model restore")
+    print("NOVA3 V5+Diagnostic: lambda_x behavior analysis")
     print("=" * 60)
-    print(f"V5 result: 73.82% at ep34 (60 epochs, delayed polynomial)")
-    print(f"V6 changes: adaptive LR decay on plateau + restore best model")
+    print(f"V5 best: 73.82% (baseline)")
+    print(f"This run: diagnose lambda_x to see if noisy samples get down-weighted")
     print(f"Params: {BEST_PARAMS}")
     print()
 
@@ -51,7 +51,7 @@ def main():
     test = torch.load('data/snli_test_0.1.pkl', weights_only=False)
     training_size = train.dataset_size
 
-    n_epochs = 60
+    n_epochs = 20
     batch_size = 512
 
     args = argparse.Namespace(
@@ -87,11 +87,10 @@ def main():
 
         best_acc = max(best_acc, test_acc)
         ep_time = time.time() - ep_start
-        lr_factor = learner.lr_decay_factor
-        results.append((epoch, train_loss, test_acc, lr_factor, ep_time))
+        results.append((epoch, train_loss, test_acc, ep_time))
 
         print(f"ep{epoch:>2}/{n_epochs} | TrainLoss: {train_loss:.4f} | TestAcc: {test_acc:.4f} | "
-              f"Best: {best_acc:.4f} | lr_factor={lr_factor:.3f} | {ep_time:.0f}s")
+              f"Best: {best_acc:.4f} | {ep_time:.0f}s")
 
     total_time = (time.time() - st) / 3600
     print()
