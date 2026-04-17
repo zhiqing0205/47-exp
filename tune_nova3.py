@@ -80,7 +80,8 @@ def create_objective(n_epochs, batch_size, seed):
 
         try:
             learner = NOVA3.Learner(args, training_size, verbose=False)
-            learner.c_t = c_t        except Exception as e:
+            learner.c_t = c_t
+        except Exception as e:
             print(f"  Trial {trial.number}: init failed: {e}")
             torch.cuda.empty_cache()
             return 0.0
