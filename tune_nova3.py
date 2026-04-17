@@ -53,13 +53,13 @@ def create_objective(n_epochs, batch_size, seed):
         train, val, test = load_data()
         training_size = train.dataset_size
 
-        # === Hyperparameter search space (v10: penalty+Neumann hybrid) ===
+        # === Hyperparameter search space (v11: pseudocode-faithful penalty) ===
         outer_update_lr = trial.suggest_float("outer_update_lr", 1e-3, 0.5, log=True)
-        inner_update_lr = trial.suggest_float("inner_update_lr", 1e-3, 0.1, log=True)
+        inner_update_lr = trial.suggest_float("inner_update_lr", 1e-3, 0.5, log=True)
         gamma = trial.suggest_float("gamma", 10.0, 100.0, log=True)
-        beta = trial.suggest_float("beta", 0.5, 0.99)
+        beta = trial.suggest_float("beta", 0.1, 0.99)
         z_lr = trial.suggest_float("z_lr", 1e-4, 0.1, log=True)
-        c_t = trial.suggest_float("c_t", 1.0, 5.0, log=True)
+        c_t = trial.suggest_float("c_t", 0.5, 5.0, log=True)
 
         args = argparse.Namespace(
             data='snli', word_embed_dim=300, encoder_dim=512, n_enc_layers=2,
@@ -128,8 +128,8 @@ def main():
     parser.add_argument("--epoch", type=int, default=5, help="Epochs per trial (use fewer for faster search)")
     parser.add_argument("--batch_size", type=int, default=512, help="Batch size")
     parser.add_argument("--seed", type=int, default=2, help="Random seed")
-    parser.add_argument("--study_name", type=str, default="nova3_tune_v10", help="Optuna study name")
-    parser.add_argument("--db", type=str, default="sqlite:///logs/nova3_tune_v10.db", help="Optuna storage DB")
+    parser.add_argument("--study_name", type=str, default="nova3_tune_v11", help="Optuna study name")
+    parser.add_argument("--db", type=str, default="sqlite:///logs/nova3_tune_v11.db", help="Optuna storage DB")
     args = parser.parse_args()
 
     os.makedirs("logs", exist_ok=True)
@@ -149,13 +149,13 @@ def main():
     print(f"=== NOVA3 Hyperparameter Tuning ===")
     print(f"Trials: {args.n_trials}, Epochs/trial: {args.epoch}, Batch size: {args.batch_size}")
     print(f"Study DB: {args.db}")
-    print(f"Search space (v10: penalty+Neumann hybrid):")
-    print(f"  outer_update_lr: [1e-3, 0.5] (log) -- wider for Neumann hypergradient")
-    print(f"  inner_update_lr: [1e-3, 0.1] (log)")
-    print(f"  gamma:           [10.0, 100.0] (log) -- adaptive cosine annealing")
-    print(f"  beta:            [0.5, 0.99]")
+    print(f"Search space (v11: pseudocode-faithful penalty):")
+    print(f"  outer_update_lr: [1e-3, 0.5] (log)")
+    print(f"  inner_update_lr: [1e-3, 0.5] (log) -- wider for normalized d_y")
+    print(f"  gamma:           [10.0, 100.0] (log) -- cosine annealing to 0.2*init")
+    print(f"  beta:            [0.1, 0.99] -- wider, controls mu/rho/nu momentum")
     print(f"  z_lr:            [1e-4, 0.1] (log)")
-    print(f"  c_t:             [1.0, 5.0] (log)")
+    print(f"  c_t:             [0.5, 5.0] (log)")
     print()
 
     study.optimize(objective, n_trials=args.n_trials, show_progress_bar=True)

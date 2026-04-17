@@ -27,22 +27,21 @@ def random_seed(value):
 def main():
     random_seed(2)
 
-    # V9 params: V2 best but olr boosted 150x for sign-based update
-    # sign(d_x) has magnitude 1 per element (not 1/sqrt(N)), so needs much larger lr
+    # V2 best params (trial #19, test_acc=0.7269)
     BEST_PARAMS = {
-        'outer_update_lr': 0.05,  # was 0.00034, boosted for sign update
+        'outer_update_lr': 0.00034055842351315795,
         'inner_update_lr': 0.018765562953504705,
         'gamma': 69.55007498245101,
         'beta': 0.1412636267424252,
-        'z_lr': 0.02005017417688199,
+        'z_lr': 0.02005017417688199,  # maps to args.nu (eta_t)
         'c_t': 2.298967650867567,
     }
 
     print("=" * 60)
-    print("NOVA3 V9: V7 sign update + real SGD + boosted olr=0.05 + diagnostic")
+    print("NOVA3 V6 validation: ReduceLROnPlateau + best model restore")
     print("=" * 60)
-    print(f"V5 best: 73.82%, V8 diag shows lambda_x stuck at 1.0 (no cleaning)")
-    print(f"V9 fix: sign-based x + 150x larger olr to actually move lambda_x")
+    print(f"V5 result: 73.82% at ep34 (60 epochs, delayed polynomial)")
+    print(f"V6 changes: adaptive LR decay on plateau + restore best model")
     print(f"Params: {BEST_PARAMS}")
     print()
 
@@ -52,7 +51,7 @@ def main():
     test = torch.load('data/snli_test_0.1.pkl', weights_only=False)
     training_size = train.dataset_size
 
-    n_epochs = 10
+    n_epochs = 60
     batch_size = 512
 
     args = argparse.Namespace(
@@ -88,10 +87,12 @@ def main():
 
         best_acc = max(best_acc, test_acc)
         ep_time = time.time() - ep_start
-        results.append((epoch, train_loss, test_acc, ep_time))
+        decay = max(0.05, (5.0 / (epoch + 5)) ** 0.5) if epoch >= 5 else 1.0
+        current_lr = BEST_PARAMS['inner_update_lr'] * decay
+        results.append((epoch, train_loss, test_acc, current_lr, ep_time))
 
         print(f"ep{epoch:>2}/{n_epochs} | TrainLoss: {train_loss:.4f} | TestAcc: {test_acc:.4f} | "
-              f"Best: {best_acc:.4f} | {ep_time:.0f}s")
+              f"Best: {best_acc:.4f} | y_lr={current_lr:.5f} | {ep_time:.0f}s")
 
     total_time = (time.time() - st) / 3600
     print()
