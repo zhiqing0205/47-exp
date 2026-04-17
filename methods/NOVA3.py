@@ -1,4 +1,5 @@
 import torch
+import math
 import copy
 from torch import nn
 from torch.nn import functional as F
@@ -44,8 +45,10 @@ class Learner(nn.Module):
         self.c_t = 1.0
         self.criterion = nn.CrossEntropyLoss(reduction='none').to(self.device)
 
-        # Real SGD optimizer for y + ReduceLROnPlateau
-        self.inner_optimizer = torch.optim.SGD(self.inner_model.parameters(), lr=args.inner_update_lr, momentum=0.9)
+        # Nesterov acceleration for y (like accbo, NOT PyTorch SGD momentum)
+        self.y_old = [p.data.clone() for p in self.inner_model.parameters()]
+        self.nesterov_gamma = getattr(args, 'nesterov_gamma', 0.08)
+        self.inner_optimizer = torch.optim.SGD(self.inner_model.parameters(), lr=args.inner_update_lr, momentum=0.0)
         self.lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.inner_optimizer, mode='max', factor=0.5, patience=5,
             threshold=0.001, min_lr=args.inner_update_lr * 0.01
@@ -85,7 +88,7 @@ class Learner(nn.Module):
                 val_iter = iter(val_loader)
                 return next(val_iter)
 
-        # x and z learning rates: decay with epoch (polynomial)
+        # x and z lr decay
         decay = max(0.05, (5.0 / (epoch + 5)) ** 0.5) if epoch >= 5 else 1.0
         eta_t = self.args.nu * decay
         alpha_t = self.args.outer_update_lr * decay
@@ -116,7 +119,7 @@ class Learner(nn.Module):
 
             for p, val in zip(self.inner_model.parameters(), y_state): p.data.copy_(val)
 
-            # --- Update x (sign-based, like accbo) ---
+            # --- Update x (sign-based) ---
             out_f = predict(self.inner_model, data_f[0])
             loss_f = torch.mean(self.criterion(out_f, labels_f)) + self._reg()
             grad_f_x_tuple = torch.autograd.grad(loss_f, self.lambda_x, allow_unused=True)
@@ -137,7 +140,15 @@ class Learner(nn.Module):
             self.d_x = (self.rho * self.d_x + (1 - self.rho) * d_tilde_x).detach()
             self.lambda_x.data -= alpha_t * torch.sign(self.d_x)
 
-            # --- Update y (real SGD via optimizer) ---
+            # --- Update y: Nesterov extrapolation + SGD step ---
+            # 1. Nesterov lookahead: p = p + gamma*(p - p_old)
+            with torch.no_grad():
+                for p, po in zip(self.inner_model.parameters(), self.y_old):
+                    temp = p.data.clone()
+                    p.data += self.nesterov_gamma * (p.data - po)
+                    po.copy_(temp)
+
+            # 2. Compute gradient at extrapolated point
             self.inner_optimizer.zero_grad()
             out_f_new = predict(self.inner_model, data_f[0])
             loss_f_new = torch.mean(self.criterion(out_f_new, labels_f)) + self._reg()
@@ -147,6 +158,7 @@ class Learner(nn.Module):
             loss_g_new = torch.mean(torch.sigmoid(self.lambda_x[idx_g]) * self.criterion(out_g_new, labels_g)) + self._reg()
             grads_g_y = torch.autograd.grad(loss_g_new, self.inner_model.parameters())
 
+            # 3. Set combined gradient and step
             offset = 0
             for i, p in enumerate(self.inner_model.parameters()):
                 numel = p.numel()
@@ -184,7 +196,6 @@ class Learner(nn.Module):
             torch.cuda.empty_cache()
         self.inner_model.train()
 
-        # ReduceLROnPlateau + best model tracking
         current_acc = np.mean(task_accs)
         self.lr_scheduler.step(current_acc)
 
