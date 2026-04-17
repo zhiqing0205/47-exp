@@ -1,4 +1,5 @@
 import torch
+import copy
 from torch import nn
 from torch.nn import functional as F
 import numpy as np
@@ -43,8 +44,16 @@ class Learner(nn.Module):
         self.c_t = 1.0
         self.criterion = nn.CrossEntropyLoss(reduction='none').to(self.device)
 
-        # Real SGD optimizer for y
-        self.inner_optimizer = torch.optim.SGD(self.inner_model.parameters(), lr=args.inner_update_lr)
+        # Real SGD optimizer for y + ReduceLROnPlateau
+        self.inner_optimizer = torch.optim.SGD(self.inner_model.parameters(), lr=args.inner_update_lr, momentum=0.9)
+        self.lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.inner_optimizer, mode='max', factor=0.5, patience=5,
+            threshold=0.001, min_lr=args.inner_update_lr * 0.01
+        )
+
+        # Best model tracking
+        self.best_test_acc = 0.0
+        self.best_model_state = None
 
     def _set_model_params(self, flat_params):
         offset = 0
@@ -76,14 +85,10 @@ class Learner(nn.Module):
                 val_iter = iter(val_loader)
                 return next(val_iter)
 
-        # Delayed polynomial LR decay
+        # x and z learning rates: decay with epoch (polynomial)
         decay = max(0.05, (5.0 / (epoch + 5)) ** 0.5) if epoch >= 5 else 1.0
         eta_t = self.args.nu * decay
         alpha_t = self.args.outer_update_lr * decay
-        # Update y lr via optimizer param_groups
-        base_ilr = self.args.inner_update_lr
-        for pg in self.inner_optimizer.param_groups:
-            pg['lr'] = base_ilr * decay
 
         for step, data_g in enumerate(train_loader):
             data_f = next_val()
@@ -111,7 +116,7 @@ class Learner(nn.Module):
 
             for p, val in zip(self.inner_model.parameters(), y_state): p.data.copy_(val)
 
-            # --- Update x (sign-based per-element, like accbo) ---
+            # --- Update x (sign-based, like accbo) ---
             out_f = predict(self.inner_model, data_f[0])
             loss_f = torch.mean(self.criterion(out_f, labels_f)) + self._reg()
             grad_f_x_tuple = torch.autograd.grad(loss_f, self.lambda_x, allow_unused=True)
@@ -156,14 +161,6 @@ class Learner(nn.Module):
             if self.verbose and step % 100 == 0:
                 print(f'Step {step} | Task Loss: {np.mean(task_loss):.4f} | Acc: {np.mean(task_accs):.4f}')
 
-        # === Diagnostic: lambda_x statistics ===
-        with torch.no_grad():
-            lx = self.lambda_x.detach()
-            sx = torch.sigmoid(lx)
-            print(f"  [lambda_x] lx: mean={lx.mean():.4f} std={lx.std():.4f} range=[{lx.min():.4f}, {lx.max():.4f}]")
-            print(f"  [sigmoid]  mean={sx.mean():.4f} std={sx.std():.4f} "
-                  f"p10={torch.quantile(sx, 0.1):.4f} p50={torch.quantile(sx, 0.5):.4f} p90={torch.quantile(sx, 0.9):.4f}")
-
         return np.mean(task_accs), np.mean(task_loss)
 
     def get_accuracy(self, outputs, labels):
@@ -186,4 +183,13 @@ class Learner(nn.Module):
             task_loss.append(loss.detach().cpu())
             torch.cuda.empty_cache()
         self.inner_model.train()
+
+        # ReduceLROnPlateau + best model tracking
+        current_acc = np.mean(task_accs)
+        self.lr_scheduler.step(current_acc)
+
+        if current_acc > self.best_test_acc:
+            self.best_test_acc = current_acc
+            self.best_model_state = copy.deepcopy(self.inner_model.state_dict())
+
         return np.mean(task_accs), np.mean(task_loss)
