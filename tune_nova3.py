@@ -55,7 +55,7 @@ def create_objective(n_epochs, batch_size, seed):
 
         # === Hyperparameter search space (v11: pseudocode-faithful penalty) ===
         outer_update_lr = trial.suggest_float("outer_update_lr", 1e-3, 0.5, log=True)
-        inner_update_lr = trial.suggest_float("inner_update_lr", 1e-3, 0.5, log=True)
+        inner_update_lr = trial.suggest_float("inner_update_lr", 1e-3, 0.15, log=True)
         gamma = trial.suggest_float("gamma", 10.0, 100.0, log=True)
         beta = trial.suggest_float("beta", 0.1, 0.99)
         z_lr = trial.suggest_float("z_lr", 1e-4, 0.1, log=True)
@@ -151,7 +151,7 @@ def main():
     print(f"Study DB: {args.db}")
     print(f"Search space (v11: pseudocode-faithful penalty):")
     print(f"  outer_update_lr: [1e-3, 0.5] (log)")
-    print(f"  inner_update_lr: [1e-3, 0.5] (log) -- wider for normalized d_y")
+    print(f"  inner_update_lr: [1e-3, 0.15] (log) -- normalized d_y, step=beta_t")
     print(f"  gamma:           [10.0, 100.0] (log) -- cosine annealing to 0.2*init")
     print(f"  beta:            [0.1, 0.99] -- wider, controls mu/rho/nu momentum")
     print(f"  z_lr:            [1e-4, 0.1] (log)")

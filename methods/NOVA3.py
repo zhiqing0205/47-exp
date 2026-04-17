@@ -92,10 +92,10 @@ class Learner(nn.Module):
                 val_iter = iter(val_loader)
                 return next(val_iter)
 
-        # Adaptive gamma: cosine anneal gamma_init → 0.2*gamma_init
+        # Adaptive gamma: cosine anneal gamma_init → 0.5*gamma_init
         total_epochs = getattr(self.args, 'epoch', 25)
         progress = min(epoch / max(total_epochs - 1, 1), 1.0)
-        gamma_final = self.gamma_init * 0.2
+        gamma_final = self.gamma_init * 0.5
         self.gamma = self.gamma_init - (self.gamma_init - gamma_final) * (1 - math.cos(math.pi * progress)) / 2
 
         # Delayed polynomial LR decay: full lr for 5 epochs, then decay
@@ -151,15 +151,15 @@ class Learner(nn.Module):
 
             # Term 2: ∇₁g(x, y; ζ) — gradient of weighted training loss w.r.t. lambda_x at y
             out_g_y = predict(self.inner_model, data_g[0])
-            loss_g_y = torch.mean(torch.sigmoid(self.lambda_x[idx_g]) * self.criterion(out_g_y, labels_g)) + self._reg()
-            grad_g_x_y = torch.autograd.grad(loss_g_y, self.lambda_x, retain_graph=True)[0]
-            # Also get ∇₂g(x, y; ζ) for y-update (reuse this forward pass)
-            grads_g_y_for_y = torch.autograd.grad(loss_g_y, self.inner_model.parameters())
+            ce_g = self.criterion(out_g_y, labels_g).detach()
+            loss_g_y = torch.mean(torch.sigmoid(self.lambda_x[idx_g]) * ce_g) + self._reg()
+            grad_g_x_y = torch.autograd.grad(loss_g_y, self.lambda_x)[0]
 
             # Term 3: ∇₁g(x, z^{t+1}; ξ̂) — gradient at z, using hat_S_g (data_gh)
             self._set_model_params(self.z)
             out_g_z = predict(self.inner_model, data_gh[0])
-            loss_g_z = torch.mean(torch.sigmoid(self.lambda_x[idx_gh]) * self.criterion(out_g_z, labels_gh)) + self._reg()
+            ce_gz = self.criterion(out_g_z, labels_gh).detach()
+            loss_g_z = torch.mean(torch.sigmoid(self.lambda_x[idx_gh]) * ce_gz) + self._reg()
             grad_g_x_z = torch.autograd.grad(loss_g_z, self.lambda_x)[0]
 
             # Restore model to y
@@ -174,14 +174,18 @@ class Learner(nn.Module):
             self.lambda_x.data -= alpha_t * (self.d_x / (torch.norm(self.d_x) + 1e-8))
 
             # ==================== Y UPDATE (pseudocode Step 6-7) ====================
-            # d̃_y = (1/c_t)·∇₂f(x',y;ξ) + ∇₂g(x',y;ζ) + (1/γ)(z' - y)
+            # d̃_y = (1/c_t)·∇₂f(x^{t+1},y;ξ) + ∇₂g(x^{t+1},y;ζ) + (1/γ)(z' - y)
             # d_y = ν·d̃_y + (1-ν)·d_y_prev
             # y = y - β_t·d_y/‖d_y‖
 
-            # ∇₂f(x', y; ξ) — validation loss gradient w.r.t. model params
+            # ∇₂f(x', y; ξ) — f doesn't depend on x, so no need to recompute
             out_f = predict(self.inner_model, data_f[0])
             loss_f = torch.mean(self.criterion(out_f, labels_f)) + self._reg()
             grads_f_y = torch.autograd.grad(loss_f, self.inner_model.parameters())
+
+            # ∇₂g(x^{t+1}, y; ζ) — must use updated lambda_x (x^{t+1})
+            loss_g_y_new = torch.mean(torch.sigmoid(self.lambda_x[idx_g]) * self.criterion(out_g_y, labels_g)) + self._reg()
+            grads_g_y = torch.autograd.grad(loss_g_y_new, self.inner_model.parameters())
 
             offset = 0
             for i, p in enumerate(self.inner_model.parameters()):
@@ -189,19 +193,17 @@ class Learner(nn.Module):
                 z_i = self.z[offset:offset + numel].view(p.shape).detach()
 
                 d_tilde_y = ((1.0 / self.c_t) * grads_f_y[i].detach()
-                             + grads_g_y_for_y[i].detach()
+                             + grads_g_y[i].detach()
                              + (1.0 / self.gamma) * (z_i - p.detach()))
 
                 self.d_y[i] = (self.nu * d_tilde_y + (1 - self.nu) * self.d_y[i]).detach()
 
                 offset += numel
 
-            # Pseudocode: y -= β_t · d_y / ‖d_y‖ (global norm, not per-parameter)
+            # Pseudocode: y -= β_t · d_y / ‖d_y‖ (global norm)
             dy_global_norm = torch.sqrt(sum(torch.sum(d.pow(2)) for d in self.d_y)) + 1e-8
             for i, p in enumerate(self.inner_model.parameters()):
                 p.data -= beta_t * self.d_y[i] / dy_global_norm
-
-                offset += numel
 
             task_accs.append(self._accuracy(out_f, labels_f))
             task_loss.append(loss_f.item())
