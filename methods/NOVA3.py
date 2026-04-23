@@ -51,7 +51,6 @@ class Learner(nn.Module):
         self.gamma = args.gamma
         self.c_t = 1.0
         self.clip_grad = 1.0
-        self.reg_coeff = getattr(args, 'reg_coeff', 0.001)
 
         self.criterion = nn.CrossEntropyLoss(reduction='none').to(self.device)
 
@@ -60,7 +59,7 @@ class Learner(nn.Module):
         self.best_model_state = None
 
     def _reg(self):
-        return self.reg_coeff * sum([x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
+        return 0.0001 * sum([x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
 
     def _set_model_params(self, flat_params):
         offset = 0
@@ -99,13 +98,8 @@ class Learner(nn.Module):
         gamma_final = self.gamma_init * 0.5
         self.gamma = self.gamma_init - (self.gamma_init - gamma_final) * (1 - math.cos(math.pi * progress)) / 2
 
-        # Cosine LR decay with warmup
-        warmup_epochs = 3
-        if epoch < warmup_epochs:
-            decay = (epoch + 1) / warmup_epochs
-        else:
-            decay = 0.5 * (1 + math.cos(math.pi * (epoch - warmup_epochs) / max(total_epochs - warmup_epochs, 1)))
-        decay = max(decay, 0.01)
+        # Delayed polynomial LR decay: full lr for 5 epochs, then sqrt decay
+        decay = max(0.05, (5.0 / (epoch + 5)) ** 0.5) if epoch >= 5 else 1.0
         eta_t = self.args.nu * decay
         alpha_t = self.args.outer_update_lr * decay
         beta_t = self.args.inner_update_lr * decay
@@ -206,11 +200,10 @@ class Learner(nn.Module):
 
                 offset += numel
 
-            # Clip-normalize: y -= β_t · d_y / max(‖d_y‖, 1.0)
-            dy_global_norm = torch.sqrt(sum(torch.sum(d.pow(2)) for d in self.d_y))
-            dy_scale = max(dy_global_norm.item(), 1.0)
+            # y -= β_t · d_y / ‖d_y‖ (global norm)
+            dy_global_norm = torch.sqrt(sum(torch.sum(d.pow(2)) for d in self.d_y)) + 1e-8
             for i, p in enumerate(self.inner_model.parameters()):
-                p.data -= beta_t * self.d_y[i] / dy_scale
+                p.data -= beta_t * self.d_y[i] / dy_global_norm
 
             task_accs.append(self._accuracy(out_f, labels_f))
             task_loss.append(loss_f.item())
