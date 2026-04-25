@@ -53,13 +53,16 @@ def create_objective(n_epochs, batch_size, seed):
         train, val, test = load_data()
         training_size = train.dataset_size
 
-        # === Hyperparameter search space (v13: extended gamma + polynomial LR) ===
+        # === Hyperparameter search space (v14: dropout + independent momentum) ===
         outer_update_lr = trial.suggest_float("outer_update_lr", 1e-3, 0.5, log=True)
         inner_update_lr = trial.suggest_float("inner_update_lr", 1e-3, 0.15, log=True)
         gamma = trial.suggest_float("gamma", 50.0, 500.0, log=True)
-        beta = trial.suggest_float("beta", 0.4, 0.95)
+        mu = trial.suggest_float("mu", 0.3, 0.95)
+        rho = trial.suggest_float("rho", 0.3, 0.95)
+        nu_m = trial.suggest_float("nu_m", 0.3, 0.95)
         z_lr = trial.suggest_float("z_lr", 1e-4, 0.1, log=True)
         c_t = trial.suggest_float("c_t", 2.0, 8.0, log=True)
+        dpout_fc = trial.suggest_float("dpout_fc", 0.0, 0.3)
 
         args = argparse.Namespace(
             data='snli', word_embed_dim=300, encoder_dim=512, n_enc_layers=2,
@@ -67,8 +70,12 @@ def create_objective(n_epochs, batch_size, seed):
             outer_update_lr=outer_update_lr,
             inner_update_lr=inner_update_lr,
             gamma=gamma,
-            beta=beta,
+            beta=mu,
+            mu=mu,
+            rho=rho,
+            nu_momentum=nu_m,
             nu=z_lr,
+            dpout_fc=dpout_fc,
             inner_batch_size=batch_size,
             batch_size=16,
             noise_rate=0.1,
@@ -77,7 +84,8 @@ def create_objective(n_epochs, batch_size, seed):
         )
 
         print(f"\n  T{trial.number} params: olr={outer_update_lr:.5f} ilr={inner_update_lr:.5f} "
-              f"gamma={gamma:.3f} beta={beta:.3f} z_lr={z_lr:.5f} c_t={c_t:.3f}")
+              f"gamma={gamma:.1f} mu={mu:.3f} rho={rho:.3f} nu={nu_m:.3f} "
+              f"z_lr={z_lr:.5f} c_t={c_t:.3f} dp={dpout_fc:.3f}")
 
         try:
             learner = NOVA3.Learner(args, training_size, verbose=False)
@@ -114,7 +122,8 @@ def create_objective(n_epochs, batch_size, seed):
 
         print(f"  Trial {trial.number}: best_test_acc={best_test_acc:.4f} | "
               f"olr={outer_update_lr:.4f} ilr={inner_update_lr:.4f} "
-              f"gamma={gamma:.1f} beta={beta:.3f} z_lr={z_lr:.4f} c_t={c_t:.3f}")
+              f"gamma={gamma:.1f} mu={mu:.3f} rho={rho:.3f} nu={nu_m:.3f} "
+              f"z_lr={z_lr:.4f} c_t={c_t:.3f} dp={dpout_fc:.3f}")
 
         del learner
         torch.cuda.empty_cache()
@@ -129,8 +138,8 @@ def main():
     parser.add_argument("--epoch", type=int, default=5, help="Epochs per trial (use fewer for faster search)")
     parser.add_argument("--batch_size", type=int, default=512, help="Batch size")
     parser.add_argument("--seed", type=int, default=2, help="Random seed")
-    parser.add_argument("--study_name", type=str, default="nova3_tune_v13", help="Optuna study name")
-    parser.add_argument("--db", type=str, default="sqlite:///logs/nova3_tune_v13.db", help="Optuna storage DB")
+    parser.add_argument("--study_name", type=str, default="nova3_tune_v14", help="Optuna study name")
+    parser.add_argument("--db", type=str, default="sqlite:///logs/nova3_tune_v14.db", help="Optuna storage DB")
     args = parser.parse_args()
 
     os.makedirs("logs", exist_ok=True)
@@ -150,13 +159,16 @@ def main():
     print(f"=== NOVA3 Hyperparameter Tuning ===")
     print(f"Trials: {args.n_trials}, Epochs/trial: {args.epoch}, Batch size: {args.batch_size}")
     print(f"Study DB: {args.db}")
-    print(f"Search space (v13: extended gamma + polynomial LR):")
+    print(f"Search space (v14: dropout + independent momentum):")
     print(f"  outer_update_lr: [1e-3, 0.5] (log)")
     print(f"  inner_update_lr: [1e-3, 0.15] (log)")
-    print(f"  gamma:           [50, 500] (log) -- extended 5x from v11 ceiling")
-    print(f"  beta:            [0.4, 0.95]")
+    print(f"  gamma:           [50, 500] (log)")
+    print(f"  mu:              [0.3, 0.95] -- z momentum (pseudocode mu)")
+    print(f"  rho:             [0.3, 0.95] -- x momentum (pseudocode rho)")
+    print(f"  nu_m:            [0.3, 0.95] -- y momentum (pseudocode nu)")
     print(f"  z_lr:            [1e-4, 0.1] (log)")
     print(f"  c_t:             [2.0, 8.0] (log)")
+    print(f"  dpout_fc:        [0.0, 0.3] -- FC dropout for regularization")
     print()
 
     study.optimize(objective, n_trials=args.n_trials, show_progress_bar=True)
@@ -178,13 +190,14 @@ def main():
     completed = [t for t in study.trials if t.state == TrialState.COMPLETE]
     completed.sort(key=lambda t: t.value, reverse=True)
     print(f"\nTop 10 Trials (out of {len(completed)} completed):")
-    print(f"{'Rank':>4} | {'Trial':>5} | {'Test Acc':>8} | {'olr':>8} | {'ilr':>8} | {'gamma':>8} | {'beta':>5} | {'z_lr':>8} | {'c_t':>6}")
-    print("-" * 85)
+    print(f"{'Rank':>4} | {'Trial':>5} | {'Acc':>7} | {'olr':>7} | {'ilr':>6} | {'gamma':>5} | {'mu':>4} | {'rho':>4} | {'nu':>4} | {'z_lr':>6} | {'c_t':>4} | {'dp':>4}")
+    print("-" * 95)
     for i, t in enumerate(completed[:10]):
         p = t.params
-        print(f"{i+1:>4} | {t.number:>5} | {t.value:>8.4f} | {p['outer_update_lr']:>8.4f} | "
-              f"{p['inner_update_lr']:>8.4f} | {p['gamma']:>8.1f} | {p['beta']:>5.3f} | "
-              f"{p['z_lr']:>8.4f} | {p['c_t']:>6.3f}")
+        print(f"{i+1:>4} | {t.number:>5} | {t.value:>7.4f} | {p['outer_update_lr']:>7.4f} | "
+              f"{p['inner_update_lr']:>6.3f} | {p['gamma']:>5.0f} | {p.get('mu', p.get('beta',0)):>4.2f} | "
+              f"{p.get('rho', p.get('beta',0)):>4.2f} | {p.get('nu_m', p.get('beta',0)):>4.2f} | "
+              f"{p['z_lr']:>6.4f} | {p['c_t']:>4.1f} | {p.get('dpout_fc',0):>4.2f}")
 
     # Save results
     result_file = f"logs/nova3_tune_results.txt"

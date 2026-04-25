@@ -22,7 +22,8 @@ class Learner(nn.Module):
 
         self.inner_model = NLIRNN(
             word_embed_dim=args.word_embed_dim, encoder_dim=args.encoder_dim,
-            n_enc_layers=args.n_enc_layers, dpout_model=0.0, dpout_fc=0.0,
+            n_enc_layers=args.n_enc_layers, dpout_model=0.0,
+            dpout_fc=getattr(args, 'dpout_fc', 0.0),
             fc_dim=args.fc_dim, n_classes=args.n_classes,
             pool_type=args.pool_type, linear_fc=args.linear_fc
         ).to(self.device)
