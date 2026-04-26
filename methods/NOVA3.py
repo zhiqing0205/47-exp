@@ -201,10 +201,11 @@ class Learner(nn.Module):
 
                 offset += numel
 
-            # y -= β_t · d_y / ‖d_y‖ (global norm)
-            dy_global_norm = torch.sqrt(sum(torch.sum(d.pow(2)) for d in self.d_y)) + 1e-8
+            # clip-normalize: y -= β_t · d_y / max(‖d_y‖, 1)
+            dy_global_norm = torch.sqrt(sum(torch.sum(d.pow(2)) for d in self.d_y))
+            dy_scale = max(dy_global_norm.item(), 1.0)
             for i, p in enumerate(self.inner_model.parameters()):
-                p.data -= beta_t * self.d_y[i] / dy_global_norm
+                p.data -= beta_t * self.d_y[i] / dy_scale
 
             task_accs.append(self._accuracy(out_f, labels_f))
             task_loss.append(loss_f.item())
