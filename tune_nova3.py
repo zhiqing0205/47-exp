@@ -159,7 +159,7 @@ def main():
     print(f"  beta:            [0.4, 0.95]")
     print(f"  z_lr:            [1e-4, 0.1] (log)")
     print(f"  c_t:             [2.0, 8.0] (log)")
-    print(f"  dpout_fc:        [0.0, 0.2] -- FC dropout (safe with clip-norm)")
+    print(f"  dpout_fc:        [0.0, 0.3] -- FC dropout (safe with clip-norm)")
     print()
 
     study.optimize(objective, n_trials=args.n_trials, show_progress_bar=True)
