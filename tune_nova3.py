@@ -60,7 +60,7 @@ def create_objective(n_epochs, batch_size, seed):
         beta = trial.suggest_float("beta", 0.4, 0.95)
         z_lr = trial.suggest_float("z_lr", 1e-4, 0.1, log=True)
         c_t = trial.suggest_float("c_t", 2.0, 8.0, log=True)
-        dpout_fc = trial.suggest_float("dpout_fc", 0.0, 0.2)
+        dpout_fc = trial.suggest_float("dpout_fc", 0.0, 0.3)
 
         args = argparse.Namespace(
             data='snli', word_embed_dim=300, encoder_dim=512, n_enc_layers=2,
