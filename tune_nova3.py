@@ -56,7 +56,7 @@ def create_objective(n_epochs, batch_size, seed):
         # === Hyperparameter search space (v15: clip-normalize + dropout) ===
         outer_update_lr = trial.suggest_float("outer_update_lr", 1e-3, 0.5, log=True)
         inner_update_lr = trial.suggest_float("inner_update_lr", 1e-3, 0.15, log=True)
-        gamma = trial.suggest_float("gamma", 50.0, 500.0, log=True)
+        gamma = trial.suggest_float("gamma", 50.0, 1000.0, log=True)
         beta = trial.suggest_float("beta", 0.4, 0.95)
         z_lr = trial.suggest_float("z_lr", 1e-4, 0.1, log=True)
         c_t = trial.suggest_float("c_t", 2.0, 8.0, log=True)
@@ -131,8 +131,8 @@ def main():
     parser.add_argument("--epoch", type=int, default=5, help="Epochs per trial (use fewer for faster search)")
     parser.add_argument("--batch_size", type=int, default=512, help="Batch size")
     parser.add_argument("--seed", type=int, default=2, help="Random seed")
-    parser.add_argument("--study_name", type=str, default="nova3_tune_v15", help="Optuna study name")
-    parser.add_argument("--db", type=str, default="sqlite:///logs/nova3_tune_v15.db", help="Optuna storage DB")
+    parser.add_argument("--study_name", type=str, default="nova3_tune_v15b", help="Optuna study name")
+    parser.add_argument("--db", type=str, default="sqlite:///logs/nova3_tune_v15b.db", help="Optuna storage DB")
     args = parser.parse_args()
 
     os.makedirs("logs", exist_ok=True)
@@ -155,7 +155,7 @@ def main():
     print(f"Search space (v15: clip-normalize + dropout):")
     print(f"  outer_update_lr: [1e-3, 0.5] (log)")
     print(f"  inner_update_lr: [1e-3, 0.15] (log)")
-    print(f"  gamma:           [50, 500] (log)")
+    print(f"  gamma:           [50, 1000] (log) -- extended from v15")
     print(f"  beta:            [0.4, 0.95]")
     print(f"  z_lr:            [1e-4, 0.1] (log)")
     print(f"  c_t:             [2.0, 8.0] (log)")
