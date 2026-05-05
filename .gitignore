@@ -44,3 +44,4 @@ results_time.md
 nohup.out
 .claude/
 .ipynb_checkpoints/
+.env

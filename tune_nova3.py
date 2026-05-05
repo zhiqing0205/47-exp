@@ -16,12 +16,26 @@ import random
 import numpy as np
 import optuna
 from optuna.trial import TrialState
+from urllib.request import urlopen
+from urllib.parse import quote
 
 from methods import NOVA3
 from data_loader import collate_pad_double
 from torch.utils.data import DataLoader
 
 torch.backends.cudnn.enabled = False
+
+BARK_KEY = os.environ.get('BARK_KEY', '')
+
+
+def bark_notify(title, body):
+    if not BARK_KEY:
+        return
+    try:
+        url = f"https://api.day.app/{BARK_KEY}/{quote(title)}/{quote(body)}"
+        urlopen(url, timeout=5)
+    except Exception:
+        pass
 
 
 def random_seed(value):
@@ -46,6 +60,7 @@ def load_data():
 
 def create_objective(n_epochs, batch_size, seed):
     """Create an Optuna objective function."""
+    best_so_far = [0.0]
 
     def objective(trial):
         random_seed(seed)
@@ -53,13 +68,13 @@ def create_objective(n_epochs, batch_size, seed):
         train, val, test = load_data()
         training_size = train.dataset_size
 
-        # === Hyperparameter search space (v15c: clip-norm + dropout + independent momentum) ===
+        # === Hyperparameter search space (v17) ===
         outer_update_lr = trial.suggest_float("outer_update_lr", 1e-3, 0.1, log=True)
         inner_update_lr = trial.suggest_float("inner_update_lr", 1e-3, 0.15, log=True)
-        gamma = trial.suggest_float("gamma", 50.0, 1000.0, log=True)
+        gamma = trial.suggest_float("gamma", 50.0, 2000.0, log=True)
         mu = trial.suggest_float("mu", 0.3, 0.95)
         rho = trial.suggest_float("rho", 0.3, 0.95)
-        nu_m = trial.suggest_float("nu_m", 0.5, 0.95)
+        nu_m = trial.suggest_float("nu_m", 0.5, 0.99)
         z_lr = trial.suggest_float("z_lr", 1e-4, 0.1, log=True)
         c_t = trial.suggest_float("c_t", 2.0, 8.0, log=True)
         dpout_fc = trial.suggest_float("dpout_fc", 0.0, 0.5)
@@ -115,6 +130,11 @@ def create_objective(n_epochs, batch_size, seed):
 
             print(f"  T{trial.number} ep{epoch}/{n_epochs} | TrainLoss: {train_loss:.4f} | TestAcc: {test_acc:.4f} | Best: {best_test_acc:.4f}")
 
+            if best_test_acc > best_so_far[0]:
+                best_so_far[0] = best_test_acc
+                bark_notify("NOVA3 New High",
+                            f"T{trial.number} ep{epoch}: {best_test_acc:.4f}")
+
             # Report intermediate value for pruning
             trial.report(test_acc, epoch)
             if trial.should_prune():
@@ -138,11 +158,23 @@ def main():
     parser.add_argument("--epoch", type=int, default=5, help="Epochs per trial (use fewer for faster search)")
     parser.add_argument("--batch_size", type=int, default=512, help="Batch size")
     parser.add_argument("--seed", type=int, default=2, help="Random seed")
-    parser.add_argument("--study_name", type=str, default="nova3_tune_v16", help="Optuna study name")
-    parser.add_argument("--db", type=str, default="sqlite:///logs/nova3_tune_v16.db", help="Optuna storage DB")
+    parser.add_argument("--study_name", type=str, default="nova3_tune_v17", help="Optuna study name")
+    parser.add_argument("--db", type=str, default="sqlite:///logs/nova3_tune_v17.db", help="Optuna storage DB")
     args = parser.parse_args()
 
     os.makedirs("logs", exist_ok=True)
+
+    # Load .env for BARK_KEY
+    global BARK_KEY
+    env_path = os.path.join(os.path.dirname(__file__), '.env')
+    if os.path.isfile(env_path):
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    k, v = line.split('=', 1)
+                    if k.strip() == 'BARK_KEY':
+                        BARK_KEY = v.strip()
 
     # Create study with MedianPruner: prune trials that fall below median at each epoch
     pruner = optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=1)
@@ -159,16 +191,17 @@ def main():
     print(f"=== NOVA3 Hyperparameter Tuning ===")
     print(f"Trials: {args.n_trials}, Epochs/trial: {args.epoch}, Batch size: {args.batch_size}")
     print(f"Study DB: {args.db}")
-    print(f"Search space (v15c: clip-norm + dropout + independent momentum):")
+    print(f"Bark notify: {'enabled' if BARK_KEY else 'disabled (set BARK_KEY in .env)'}")
+    print(f"Search space (v17: clip-norm + dropout + independent momentum):")
     print(f"  outer_update_lr: [1e-3, 0.1] (log)")
     print(f"  inner_update_lr: [1e-3, 0.15] (log)")
-    print(f"  gamma:           [50, 1000] (log)")
-    print(f"  mu:              [0.3, 0.95] -- z momentum (pseudocode mu)")
-    print(f"  rho:             [0.3, 0.95] -- x momentum (pseudocode rho)")
-    print(f"  nu_m:            [0.5, 0.95] -- y momentum (pseudocode nu)")
+    print(f"  gamma:           [50, 2000] (log)")
+    print(f"  mu:              [0.3, 0.95] -- z momentum")
+    print(f"  rho:             [0.3, 0.95] -- x momentum")
+    print(f"  nu_m:            [0.5, 0.99] -- y momentum")
     print(f"  z_lr:            [1e-4, 0.1] (log)")
     print(f"  c_t:             [2.0, 8.0] (log)")
-    print(f"  dpout_fc:        [0.0, 0.5] -- FC dropout (safe with clip-norm)")
+    print(f"  dpout_fc:        [0.0, 0.5] -- FC dropout")
     print()
 
     study.optimize(objective, n_trials=args.n_trials, show_progress_bar=True)
@@ -218,13 +251,20 @@ def main():
     print(f"        args.outer_update_lr = {bp['outer_update_lr']}")
     print(f"        args.inner_update_lr = {bp['inner_update_lr']}")
     print(f"        args.gamma = {bp['gamma']}")
-    print(f"        args.beta = {bp['beta']}")
+    print(f"        args.mu = {bp['mu']}")
+    print(f"        args.rho = {bp['rho']}")
+    print(f"        args.nu_momentum = {bp['nu_m']}")
+    print(f"        args.beta = {bp['mu']}")
     print(f"        args.nu = {bp['z_lr']}")
+    print(f"        args.dpout_fc = {bp['dpout_fc']}")
     print(f"        learner = NOVA3.Learner(args, training_size)")
     print(f"        learner.c_t = {bp['c_t']}")
 
     print(f"\nResults saved to {result_file}")
     print(f"Study DB: {args.db} (can resume with --study_name {args.study_name})")
+
+    bark_notify("NOVA3 Tuning Done",
+                f"Best: {best.value:.4f} T#{best.number}")
 
 
 if __name__ == "__main__":
