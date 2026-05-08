@@ -68,16 +68,18 @@ def create_objective(n_epochs, batch_size, seed):
         train, val, test = load_data()
         training_size = train.dataset_size
 
-        # === Hyperparameter search space (v17) ===
+        # === Hyperparameter search space (v18: faithful pseudocode + EMA/label_smooth) ===
         outer_update_lr = trial.suggest_float("outer_update_lr", 1e-3, 0.1, log=True)
         inner_update_lr = trial.suggest_float("inner_update_lr", 1e-3, 0.15, log=True)
-        gamma = trial.suggest_float("gamma", 50.0, 2000.0, log=True)
+        gamma = trial.suggest_float("gamma", 100.0, 800.0, log=True)
         mu = trial.suggest_float("mu", 0.3, 0.95)
         rho = trial.suggest_float("rho", 0.3, 0.95)
         nu_m = trial.suggest_float("nu_m", 0.5, 0.99)
         z_lr = trial.suggest_float("z_lr", 1e-4, 0.1, log=True)
         c_t = trial.suggest_float("c_t", 2.0, 8.0, log=True)
-        dpout_fc = trial.suggest_float("dpout_fc", 0.0, 0.5)
+        dpout_fc = trial.suggest_float("dpout_fc", 0.0, 0.15)
+        ema_decay = trial.suggest_float("ema_decay", 0.99, 0.999)
+        label_smooth = trial.suggest_float("label_smooth", 0.0, 0.15)
 
         args = argparse.Namespace(
             data='snli', word_embed_dim=300, encoder_dim=512, n_enc_layers=2,
@@ -91,8 +93,10 @@ def create_objective(n_epochs, batch_size, seed):
             nu_momentum=nu_m,
             nu=z_lr,
             dpout_fc=dpout_fc,
+            ema_decay=ema_decay,
+            label_smooth=label_smooth,
             inner_batch_size=batch_size,
-            batch_size=16,
+            batch_size=64,
             noise_rate=0.1,
             seed=seed,
             epoch=n_epochs,
@@ -100,7 +104,7 @@ def create_objective(n_epochs, batch_size, seed):
 
         print(f"\n  T{trial.number} params: olr={outer_update_lr:.5f} ilr={inner_update_lr:.5f} "
               f"gamma={gamma:.1f} mu={mu:.3f} rho={rho:.3f} nu={nu_m:.3f} "
-              f"z_lr={z_lr:.5f} c_t={c_t:.3f} dp={dpout_fc:.3f}")
+              f"z_lr={z_lr:.5f} c_t={c_t:.3f} dp={dpout_fc:.3f} ema={ema_decay:.4f} ls={label_smooth:.3f}")
 
         try:
             learner = NOVA3.Learner(args, training_size, verbose=False)
@@ -143,7 +147,7 @@ def create_objective(n_epochs, batch_size, seed):
         print(f"  Trial {trial.number}: best_test_acc={best_test_acc:.4f} | "
               f"olr={outer_update_lr:.4f} ilr={inner_update_lr:.4f} "
               f"gamma={gamma:.1f} mu={mu:.3f} rho={rho:.3f} nu={nu_m:.3f} "
-              f"z_lr={z_lr:.4f} c_t={c_t:.3f} dp={dpout_fc:.3f}")
+              f"z_lr={z_lr:.4f} c_t={c_t:.3f} dp={dpout_fc:.3f} ema={ema_decay:.4f} ls={label_smooth:.3f}")
 
         del learner
         torch.cuda.empty_cache()
@@ -158,8 +162,8 @@ def main():
     parser.add_argument("--epoch", type=int, default=5, help="Epochs per trial (use fewer for faster search)")
     parser.add_argument("--batch_size", type=int, default=512, help="Batch size")
     parser.add_argument("--seed", type=int, default=2, help="Random seed")
-    parser.add_argument("--study_name", type=str, default="nova3_tune_v17", help="Optuna study name")
-    parser.add_argument("--db", type=str, default="sqlite:///logs/nova3_tune_v17.db", help="Optuna storage DB")
+    parser.add_argument("--study_name", type=str, default="nova3_tune_v18", help="Optuna study name")
+    parser.add_argument("--db", type=str, default="sqlite:///logs/nova3_tune_v18.db", help="Optuna storage DB")
     args = parser.parse_args()
 
     os.makedirs("logs", exist_ok=True)
@@ -192,16 +196,18 @@ def main():
     print(f"Trials: {args.n_trials}, Epochs/trial: {args.epoch}, Batch size: {args.batch_size}")
     print(f"Study DB: {args.db}")
     print(f"Bark notify: {'enabled' if BARK_KEY else 'disabled (set BARK_KEY in .env)'}")
-    print(f"Search space (v17: clip-norm + dropout + independent momentum):")
+    print(f"Search space (v18: faithful pseudocode + EMA/label_smooth):")
     print(f"  outer_update_lr: [1e-3, 0.1] (log)")
     print(f"  inner_update_lr: [1e-3, 0.15] (log)")
-    print(f"  gamma:           [50, 2000] (log)")
+    print(f"  gamma:           [100, 800] (log) -- constant (no annealing)")
     print(f"  mu:              [0.3, 0.95] -- z momentum")
     print(f"  rho:             [0.3, 0.95] -- x momentum")
     print(f"  nu_m:            [0.5, 0.99] -- y momentum")
     print(f"  z_lr:            [1e-4, 0.1] (log)")
     print(f"  c_t:             [2.0, 8.0] (log)")
-    print(f"  dpout_fc:        [0.0, 0.5] -- FC dropout")
+    print(f"  dpout_fc:        [0.0, 0.15] -- FC dropout")
+    print(f"  ema_decay:       [0.99, 0.999] -- EMA for eval")
+    print(f"  label_smooth:    [0.0, 0.15] -- label smoothing")
     print()
 
     study.optimize(objective, n_trials=args.n_trials, show_progress_bar=True)
@@ -257,6 +263,8 @@ def main():
     print(f"        args.beta = {bp['mu']}")
     print(f"        args.nu = {bp['z_lr']}")
     print(f"        args.dpout_fc = {bp['dpout_fc']}")
+    print(f"        args.ema_decay = {bp['ema_decay']}")
+    print(f"        args.label_smooth = {bp['label_smooth']}")
     print(f"        learner = NOVA3.Learner(args, training_size)")
     print(f"        learner.c_t = {bp['c_t']}")
 
