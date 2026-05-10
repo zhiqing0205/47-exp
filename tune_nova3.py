@@ -162,8 +162,8 @@ def main():
     parser.add_argument("--epoch", type=int, default=5, help="Epochs per trial (use fewer for faster search)")
     parser.add_argument("--batch_size", type=int, default=512, help="Batch size")
     parser.add_argument("--seed", type=int, default=2, help="Random seed")
-    parser.add_argument("--study_name", type=str, default="nova3_tune_v18", help="Optuna study name")
-    parser.add_argument("--db", type=str, default="sqlite:///logs/nova3_tune_v18.db", help="Optuna storage DB")
+    parser.add_argument("--study_name", type=str, default="nova3_tune_v18b", help="Optuna study name")
+    parser.add_argument("--db", type=str, default="sqlite:///logs/nova3_tune_v18b.db", help="Optuna storage DB")
     args = parser.parse_args()
 
     os.makedirs("logs", exist_ok=True)

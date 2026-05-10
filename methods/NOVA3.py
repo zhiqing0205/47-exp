@@ -134,6 +134,11 @@ class Learner(nn.Module):
             d_tilde_z = grad_g_z + (1.0 / self.gamma) * (self.z.detach() - y_flat)
 
             self.d_z = (self.mu * self.d_z + (1 - self.mu) * d_tilde_z).detach()
+
+            dz_norm = torch.norm(self.d_z)
+            if dz_norm > 1.0:
+                self.d_z = self.d_z * (1.0 / dz_norm)
+
             self.z.data -= eta_t * self.d_z
 
             # Restore model to y
