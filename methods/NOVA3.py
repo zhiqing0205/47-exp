@@ -105,8 +105,9 @@ class Learner(nn.Module):
                 val_iter = iter(val_loader)
                 return next(val_iter)
 
-        # Delayed polynomial LR decay: full lr for 5 epochs, then sqrt decay
-        decay = max(0.05, (5.0 / (epoch + 5)) ** 0.5) if epoch >= 5 else 1.0
+        # Delayed polynomial LR decay: full lr for 5 epochs, then decay
+        decay_power = getattr(self.args, 'decay_power', 0.5)
+        decay = max(0.01, (5.0 / (epoch + 5)) ** decay_power) if epoch >= 5 else 1.0
         eta_t = self.args.nu * decay
         alpha_t = self.args.outer_update_lr * decay
         beta_t = self.args.inner_update_lr * decay
