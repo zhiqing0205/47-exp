@@ -240,33 +240,49 @@ def main():
               f"{p['z_lr']:>6.4f} | {p['c_t']:>4.1f} | {p.get('dpout_fc',0):>4.2f}")
 
     # Save results
+    def round_params(p):
+        return {k: round(v, 4) if isinstance(v, float) else v for k, v in p.items()}
+
     result_file = f"logs/nova3_tune_results.txt"
     with open(result_file, 'w') as f:
         f.write(f"Best Test Acc: {best.value:.4f}\n")
-        f.write(f"Best Params:\n")
-        for k, v in best.params.items():
+        f.write(f"Best Params (rounded):\n")
+        for k, v in r.items():
             f.write(f"  {k}: {v}\n")
         f.write(f"\nTop 10:\n")
         for i, t in enumerate(completed[:10]):
-            f.write(f"  #{t.number}: acc={t.value:.4f} params={t.params}\n")
+            f.write(f"  #{t.number}: acc={t.value:.4f} params={round_params(t.params)}\n")
 
-    # Generate the args line for main.py
+    # Generate the args line for main.py (rounded to match training values)
     bp = best.params
+    r = {
+        'olr': round(bp['outer_update_lr'], 4),
+        'ilr': round(bp['inner_update_lr'], 3),
+        'gamma': round(bp['gamma']),
+        'mu': round(bp['mu'], 2),
+        'rho': round(bp['rho'], 2),
+        'nu_m': round(bp['nu_m'], 2),
+        'z_lr': round(bp['z_lr'], 4),
+        'c_t': round(bp['c_t'], 1),
+        'dp': round(bp['dpout_fc'], 2),
+        'ema': round(bp['ema_decay'], 4),
+        'pw': round(bp['decay_power'], 1),
+    }
     print(f"\n=== Copy to main.py ===")
     print(f"    elif args.methods == 'nova3':")
-    print(f"        args.outer_update_lr = {bp['outer_update_lr']}")
-    print(f"        args.inner_update_lr = {bp['inner_update_lr']}")
-    print(f"        args.gamma = {bp['gamma']}")
-    print(f"        args.mu = {bp['mu']}")
-    print(f"        args.rho = {bp['rho']}")
-    print(f"        args.nu_momentum = {bp['nu_m']}")
-    print(f"        args.beta = {bp['mu']}")
-    print(f"        args.nu = {bp['z_lr']}")
-    print(f"        args.dpout_fc = {bp['dpout_fc']}")
-    print(f"        args.ema_decay = {bp['ema_decay']}")
-    print(f"        args.decay_power = {bp['decay_power']}")
+    print(f"        args.outer_update_lr = {r['olr']}")
+    print(f"        args.inner_update_lr = {r['ilr']}")
+    print(f"        args.gamma = {r['gamma']}")
+    print(f"        args.mu = {r['mu']}")
+    print(f"        args.rho = {r['rho']}")
+    print(f"        args.nu_momentum = {r['nu_m']}")
+    print(f"        args.beta = {r['mu']}")
+    print(f"        args.nu = {r['z_lr']}")
+    print(f"        args.dpout_fc = {r['dp']}")
+    print(f"        args.ema_decay = {r['ema']}")
+    print(f"        args.decay_power = {r['pw']}")
     print(f"        learner = NOVA3.Learner(args, training_size)")
-    print(f"        learner.c_t = {bp['c_t']}")
+    print(f"        learner.c_t = {r['c_t']}")
 
     print(f"\nResults saved to {result_file}")
     print(f"Study DB: {args.db} (can resume with --study_name {args.study_name})")
