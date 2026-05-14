@@ -51,9 +51,7 @@ class Learner(nn.Module):
         self.gamma = args.gamma
         self.c_t = 1.0
 
-        # Label smoothing
-        ls = getattr(args, 'label_smooth', 0.0)
-        self.criterion = nn.CrossEntropyLoss(reduction='none', label_smoothing=ls).to(self.device)
+        self.criterion = nn.CrossEntropyLoss(reduction='none').to(self.device)
 
         # EMA model for evaluation
         self.ema_decay = getattr(args, 'ema_decay', 0.0)
