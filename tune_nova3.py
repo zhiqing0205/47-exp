@@ -68,18 +68,18 @@ def create_objective(n_epochs, batch_size, seed):
         train, val, test = load_data()
         training_size = train.dataset_size
 
-        # === Hyperparameter search space (v20: rounded params + extended decay_power) ===
-        outer_update_lr = round(trial.suggest_float("outer_update_lr", 1e-3, 0.1, log=True), 4)
-        inner_update_lr = round(trial.suggest_float("inner_update_lr", 1e-3, 0.15, log=True), 3)
-        gamma = round(trial.suggest_float("gamma", 100.0, 800.0, log=True))
-        mu = round(trial.suggest_float("mu", 0.3, 0.95), 2)
-        rho = round(trial.suggest_float("rho", 0.3, 0.95), 2)
-        nu_m = round(trial.suggest_float("nu_m", 0.5, 0.99), 2)
-        z_lr = round(trial.suggest_float("z_lr", 1e-4, 0.1, log=True), 4)
-        c_t = round(trial.suggest_float("c_t", 2.0, 8.0, log=True), 1)
-        dpout_fc = round(trial.suggest_float("dpout_fc", 0.0, 0.15), 2)
+        # === Hyperparameter search space (v21: + reg_coeff, narrowed ranges) ===
+        outer_update_lr = round(trial.suggest_float("outer_update_lr", 0.001, 0.005, log=True), 4)
+        inner_update_lr = round(trial.suggest_float("inner_update_lr", 0.08, 0.15, log=True), 3)
+        gamma = round(trial.suggest_float("gamma", 500.0, 800.0, log=True))
+        mu = round(trial.suggest_float("mu", 0.3, 0.5), 2)
+        rho = round(trial.suggest_float("rho", 0.7, 0.95), 2)
+        nu_m = round(trial.suggest_float("nu_m", 0.8, 0.95), 2)
+        z_lr = round(trial.suggest_float("z_lr", 0.04, 0.1, log=True), 4)
+        c_t = round(trial.suggest_float("c_t", 6.0, 8.0, log=True), 1)
+        reg_coeff = round(trial.suggest_float("reg_coeff", 1e-4, 5e-3, log=True), 4)
         ema_decay = round(trial.suggest_float("ema_decay", 0.99, 0.999), 4)
-        decay_power = round(trial.suggest_float("decay_power", 0.5, 3.0), 1)
+        decay_power = round(trial.suggest_float("decay_power", 0.8, 1.5), 1)
 
         args = argparse.Namespace(
             data='snli', word_embed_dim=300, encoder_dim=512, n_enc_layers=2,
@@ -92,7 +92,8 @@ def create_objective(n_epochs, batch_size, seed):
             rho=rho,
             nu_momentum=nu_m,
             nu=z_lr,
-            dpout_fc=dpout_fc,
+            dpout_fc=0.0,
+            reg_coeff=reg_coeff,
             ema_decay=ema_decay,
             decay_power=decay_power,
             inner_batch_size=batch_size,
@@ -104,7 +105,7 @@ def create_objective(n_epochs, batch_size, seed):
 
         print(f"\n  T{trial.number} params: olr={outer_update_lr} ilr={inner_update_lr} "
               f"gamma={gamma} mu={mu} rho={rho} nu={nu_m} "
-              f"z_lr={z_lr} c_t={c_t} dp={dpout_fc} ema={ema_decay} pw={decay_power}")
+              f"z_lr={z_lr} c_t={c_t} reg={reg_coeff} ema={ema_decay} pw={decay_power}")
 
         try:
             learner = NOVA3.Learner(args, training_size, verbose=False)
@@ -147,7 +148,7 @@ def create_objective(n_epochs, batch_size, seed):
         print(f"  Trial {trial.number}: best_test_acc={best_test_acc:.4f} | "
               f"olr={outer_update_lr} ilr={inner_update_lr} "
               f"gamma={gamma} mu={mu} rho={rho} nu={nu_m} "
-              f"z_lr={z_lr} c_t={c_t} dp={dpout_fc} ema={ema_decay} pw={decay_power}")
+              f"z_lr={z_lr} c_t={c_t} reg={reg_coeff} ema={ema_decay} pw={decay_power}")
 
         del learner
         torch.cuda.empty_cache()
@@ -162,8 +163,8 @@ def main():
     parser.add_argument("--epoch", type=int, default=20, help="Epochs per trial")
     parser.add_argument("--batch_size", type=int, default=512, help="Batch size")
     parser.add_argument("--seed", type=int, default=2, help="Random seed")
-    parser.add_argument("--study_name", type=str, default="nova3_tune_v20", help="Optuna study name")
-    parser.add_argument("--db", type=str, default="sqlite:///logs/nova3_tune_v20.db", help="Optuna storage DB")
+    parser.add_argument("--study_name", type=str, default="nova3_tune_v21", help="Optuna study name")
+    parser.add_argument("--db", type=str, default="sqlite:///logs/nova3_tune_v21.db", help="Optuna storage DB")
     args = parser.parse_args()
 
     os.makedirs("logs", exist_ok=True)
@@ -196,18 +197,18 @@ def main():
     print(f"Trials: {args.n_trials}, Epochs/trial: {args.epoch}, Batch size: {args.batch_size}")
     print(f"Study DB: {args.db}")
     print(f"Bark notify: {'enabled' if BARK_KEY else 'disabled (set BARK_KEY in .env)'}")
-    print(f"Search space (v20: rounded params, no label_smooth, decay_power to 3.0):")
-    print(f"  outer_update_lr: [1e-3, 0.1] (log) → round 4dp")
-    print(f"  inner_update_lr: [1e-3, 0.15] (log) → round 3dp")
-    print(f"  gamma:           [100, 800] (log) → round int")
-    print(f"  mu:              [0.3, 0.95] → round 2dp")
-    print(f"  rho:             [0.3, 0.95] → round 2dp")
-    print(f"  nu_m:            [0.5, 0.99] → round 2dp")
-    print(f"  z_lr:            [1e-4, 0.1] (log) → round 4dp")
-    print(f"  c_t:             [2.0, 8.0] (log) → round 1dp")
-    print(f"  dpout_fc:        [0.0, 0.15] → round 2dp")
-    print(f"  ema_decay:       [0.99, 0.999] → round 4dp")
-    print(f"  decay_power:     [0.5, 3.0] → round 1dp")
+    print(f"Search space (v21: + reg_coeff, narrowed from v20 convergence):")
+    print(f"  outer_update_lr: [0.001, 0.005] (log)")
+    print(f"  inner_update_lr: [0.08, 0.15] (log)")
+    print(f"  gamma:           [500, 800] (log)")
+    print(f"  mu:              [0.3, 0.5]")
+    print(f"  rho:             [0.7, 0.95]")
+    print(f"  nu_m:            [0.8, 0.95]")
+    print(f"  z_lr:            [0.04, 0.1] (log)")
+    print(f"  c_t:             [6.0, 8.0] (log)")
+    print(f"  reg_coeff:       [1e-4, 5e-3] (log) -- anti-overfit")
+    print(f"  ema_decay:       [0.99, 0.999]")
+    print(f"  decay_power:     [0.8, 1.5]")
     print()
 
     study.optimize(objective, n_trials=args.n_trials, show_progress_bar=True)
@@ -239,6 +240,21 @@ def main():
               f"{p.get('nu_m', p.get('beta',0)):>4.2f} | "
               f"{p['z_lr']:>6.4f} | {p['c_t']:>4.1f} | {p.get('dpout_fc',0):>4.2f}")
 
+    # Generate rounded params dict
+    bp = best.params
+    r = {
+        'olr': round(bp['outer_update_lr'], 4),
+        'ilr': round(bp['inner_update_lr'], 3),
+        'gamma': round(bp['gamma']),
+        'mu': round(bp['mu'], 2),
+        'rho': round(bp['rho'], 2),
+        'nu_m': round(bp['nu_m'], 2),
+        'z_lr': round(bp['z_lr'], 4),
+        'c_t': round(bp['c_t'], 1),
+        'reg': round(bp['reg_coeff'], 4),
+        'ema': round(bp['ema_decay'], 4),
+        'pw': round(bp['decay_power'], 1),
+    }
     # Save results
     def round_params(p):
         return {k: round(v, 4) if isinstance(v, float) else v for k, v in p.items()}
@@ -253,21 +269,6 @@ def main():
         for i, t in enumerate(completed[:10]):
             f.write(f"  #{t.number}: acc={t.value:.4f} params={round_params(t.params)}\n")
 
-    # Generate the args line for main.py (rounded to match training values)
-    bp = best.params
-    r = {
-        'olr': round(bp['outer_update_lr'], 4),
-        'ilr': round(bp['inner_update_lr'], 3),
-        'gamma': round(bp['gamma']),
-        'mu': round(bp['mu'], 2),
-        'rho': round(bp['rho'], 2),
-        'nu_m': round(bp['nu_m'], 2),
-        'z_lr': round(bp['z_lr'], 4),
-        'c_t': round(bp['c_t'], 1),
-        'dp': round(bp['dpout_fc'], 2),
-        'ema': round(bp['ema_decay'], 4),
-        'pw': round(bp['decay_power'], 1),
-    }
     print(f"\n=== Copy to main.py ===")
     print(f"    elif args.methods == 'nova3':")
     print(f"        args.outer_update_lr = {r['olr']}")
@@ -278,7 +279,7 @@ def main():
     print(f"        args.nu_momentum = {r['nu_m']}")
     print(f"        args.beta = {r['mu']}")
     print(f"        args.nu = {r['z_lr']}")
-    print(f"        args.dpout_fc = {r['dp']}")
+    print(f"        args.reg_coeff = {r['reg']}")
     print(f"        args.ema_decay = {r['ema']}")
     print(f"        args.decay_power = {r['pw']}")
     print(f"        learner = NOVA3.Learner(args, training_size)")

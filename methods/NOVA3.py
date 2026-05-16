@@ -65,7 +65,8 @@ class Learner(nn.Module):
         self.best_model_state = None
 
     def _reg(self):
-        return 0.0001 * sum([x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
+        coeff = getattr(self.args, 'reg_coeff', 0.0001)
+        return coeff * sum([x.norm().pow(2) for x in self.inner_model.parameters()]).sqrt()
 
     def _set_model_params(self, flat_params):
         offset = 0
