@@ -48,6 +48,7 @@ class Learner(nn.Module):
         self.nu = getattr(args, 'nu_momentum', args.beta)
 
         # Proximal/penalty parameters
+        self.gamma_init = args.gamma
         self.gamma = args.gamma
         self.c_t = 1.0
 
@@ -103,6 +104,15 @@ class Learner(nn.Module):
             except StopIteration:
                 val_iter = iter(val_loader)
                 return next(val_iter)
+
+        # Gamma annealing (optional): gamma_init → 0.5*gamma_init
+        if getattr(self.args, 'gamma_anneal', False):
+            total_epochs = getattr(self.args, 'epoch', 20)
+            progress = min(epoch / max(total_epochs - 1, 1), 1.0)
+            gamma_final = self.gamma_init * 0.5
+            self.gamma = self.gamma_init - (self.gamma_init - gamma_final) * (1 - math.cos(math.pi * progress)) / 2
+        else:
+            self.gamma = self.gamma_init
 
         # Delayed polynomial LR decay: full lr for 5 epochs, then decay
         decay_power = getattr(self.args, 'decay_power', 0.5)
