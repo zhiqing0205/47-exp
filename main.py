@@ -201,12 +201,19 @@ def main():
         learner = MEHA.Learner(args, training_size)
 
     elif args.methods == 'nova3':
-        args.outer_update_lr = 1e-2
-        args.inner_update_lr = 1e-2
-        args.gamma = 0.1
-        args.beta = 0.9
-        args.nu = 1e-2
+        args.outer_update_lr = 0.0018
+        args.inner_update_lr = 0.127
+        args.gamma = 760
+        args.beta = 0.34
+        args.mu = 0.34
+        args.rho = 0.82
+        args.nu_momentum = 0.89
+        args.nu = 0.0852
+        args.ema_decay = 0.998
+        args.decay_power = 1.0
+        args.batch_size = 64
         learner = NOVA3.Learner(args, training_size)
+        learner.c_t = 7.8
 
     elif args.methods == 'nova2':
         args.outer_update_lr = 1e-2
