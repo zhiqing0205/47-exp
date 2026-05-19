@@ -228,15 +228,15 @@ def main():
     completed = [t for t in study.trials if t.state == TrialState.COMPLETE]
     completed.sort(key=lambda t: t.value, reverse=True)
     print(f"\nTop 10 Trials (out of {len(completed)} completed):")
-    print(f"{'Rank':>4} | {'Trial':>5} | {'Acc':>7} | {'olr':>7} | {'ilr':>6} | {'gam':>5} | {'mu':>4} | {'rho':>4} | {'nu':>4} | {'zlr':>6} | {'ct':>4} | {'dp':>4}")
+    print(f"{'Rank':>4} | {'Trial':>5} | {'Acc':>7} | {'olr':>7} | {'ilr':>6} | {'mu':>4} | {'rho':>4} | {'nu':>4} | {'zlr':>6} | {'ct':>4} | {'ema':>6} | {'pw':>3}")
     print("-" * 95)
     for i, t in enumerate(completed[:10]):
         p = t.params
         print(f"{i+1:>4} | {t.number:>5} | {t.value:>7.4f} | {p['outer_update_lr']:>7.4f} | "
-              f"{p['inner_update_lr']:>6.3f} | {p['gamma']:>5.0f} | "
+              f"{p['inner_update_lr']:>6.3f} | "
               f"{p.get('mu', p.get('beta',0)):>4.2f} | {p.get('rho', p.get('beta',0)):>4.2f} | "
               f"{p.get('nu_m', p.get('beta',0)):>4.2f} | "
-              f"{p['z_lr']:>6.4f} | {p['c_t']:>4.1f} | {p.get('dpout_fc',0):>4.2f}")
+              f"{p['z_lr']:>6.4f} | {p['c_t']:>4.1f} | {p.get('ema_decay',0):>6.4f} | {p.get('decay_power',0):>3.1f}")
 
     # Generate rounded params dict
     bp = best.params
