@@ -14,7 +14,7 @@ results_file="logs/multiseed_results.txt"
 
 for seed in 0 1 2 3 7 10 42 123 2024 2026; do
     echo "--- Running seed=$seed ---"
-    python validate_v22.py --seed $seed 2>&1 | tee -a "logs/multiseed_seed${seed}.log"
+    python -u validate_v22.py --seed $seed 2>&1 | tee "logs/multiseed_seed${seed}.log"
     echo ""
 done
 
